@@ -6,8 +6,8 @@ import pandas as pd
 from apify_client import ApifyClient
 from openai import OpenAI
 
-ACTOR_PRIMARY = "IhQuCmT40q1tetuv3"  # easyapi/builtin-jobs-scraper ($19.99/mo)
-ACTOR_FALLBACK = "shahidirfan/builtin-jobs-scraper"  # pay-per-usage only
+ACTOR_PRIMARY = "shahidirfan/builtin-jobs-scraper"  # pay-per-usage only
+ACTOR_FALLBACK = "IhQuCmT40q1tetuv3"  # easyapi/builtin-jobs-scraper ($19.99/mo)
 
 def scrape_apify(start_urls: list[str], max_items: int) -> list[dict]:
     token = os.environ.get("APIFY_API_TOKEN")
