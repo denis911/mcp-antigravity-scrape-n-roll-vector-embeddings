@@ -44,7 +44,12 @@ Add to your `claude_desktop_config.json`:
   "mcpServers": {
     "job-matcher": {
       "command": "uv",
-      "args": ["run", "C:/path/to/job-matcher-mcp/job_matcher_mcp.py"]
+      "args": [
+        "--directory",
+        "C:/path/to/job-matcher-mcp",
+        "run",
+        "job_matcher_mcp.py"
+      ]
     }
   }
 }
