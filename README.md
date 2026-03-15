@@ -1,2 +1,54 @@
-# mcp-antigravity-scrape-n-roll-vector-embeddings
-STDIO based MCP server to collect and rank job postings data to be used later with skills and agents and save tokens
+# Job Matcher MCP Server
+
+STDIO based MCP server to collect and rank job postings data to be used later with skills and agents and save tokens.
+
+## What it does
+Builds a local MCP server (`job_matcher_mcp.py`) that orchestrates a three-stage pipeline:
+1. **Scrape** — fetches live job postings by keyword + location and saves raw CSV
+2. **Embed** — computes and caches HuggingFace embeddings per job description
+3. **Score & Rank** — scores cosine similarity vs. candidate profile, provides LLM fit explanations, returning formatted JSON
+
+## Requirements
+- Python >= 3.11
+- `uv` package manager
+
+## Installation (uv)
+
+This project uses `uv` to manage dependencies seamlessly without polluting system python.
+
+Run setup and install dependencies:
+```bash
+uv sync
+```
+
+## Configuration (.env)
+
+API Keys are expected in your Windows User variables. You can verify they are ready to use via PowerShell:
+
+```powershell
+echo $env:OPENAI_API_KEY
+echo $env:APIFY_API_TOKEN
+```
+
+If not, please add `OPENAI_API_KEY` and `APIFY_API_TOKEN` to your user environment variables and restart your terminal.
+
+## Usage
+
+### Via Claude Desktop
+Add to your `claude_desktop_config.json`:
+```json
+{
+  "mcpServers": {
+    "job-matcher": {
+      "command": "uv",
+      "args": ["run", "C:/path/to/job-matcher-mcp/job_matcher_mcp.py"]
+    }
+  }
+}
+```
+
+### Via MCP Inspector (manual testing)
+To manually test and interact with the tools during development:
+```bash
+uv run mcp-inspector job_matcher_mcp.py
+```
