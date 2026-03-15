@@ -1,0 +1,70 @@
+{
+  "identity": {
+    "full_name": "Denis 911",
+    "location": "Berlin, Germany"
+  },
+  "summary": {
+    "headline": "Builder of Autonomous Systems & Agentic Pipelines",
+    "elevator_pitch": "I am a builder focused on autonomous systems, data pipelines, and agentic workflows using Python, GCP, and open-source models."
+  },
+  "technical_skills": {
+    "languages": [
+      "Python",
+      "SQL",
+      "JavaScript"
+    ],
+    "machine_learning": [
+      "LLMs",
+      "HuggingFace",
+      "Embeddings",
+      "PyTorch",
+      "GCP Vertex AI"
+    ],
+    "gtm_tools": [
+      "n8n",
+      "Clay",
+      "Salesforce"
+    ]
+  },
+  "ats_keywords_pool": [
+    "Python",
+    "LLM",
+    "Data Science",
+    "GTM Engineer",
+    "Solutions Engineer",
+    "Machine Learning",
+    "n8n",
+    "RevOps"
+  ],
+  "open_roles_targeted": {
+    "primary": [
+      "GTM Engineer",
+      "LLM Engineer",
+      "Solutions Engineer",
+      "ML Engineer"
+    ],
+    "secondary": [
+      "Data Scientist",
+      "Backend Engineer"
+    ]
+  },
+  "experience": [
+    {
+      "role": "Agentic Engineer",
+      "company": "ListenLabs",
+      "summary": "Built an autonomous agentic system for web scraping and CRM data enrichment.",
+      "achievements": [
+        {
+          "description": "Orchestrated multiple APIs and scrapers to pull and normalize unstructured data",
+          "impact": "Saved 40 hours a week of manual lead qualification"
+        }
+      ],
+      "tech_used": [
+        "Python",
+        "GPT-4o",
+        "n8n",
+        "HuggingFace"
+      ]
+    }
+  ]
+}

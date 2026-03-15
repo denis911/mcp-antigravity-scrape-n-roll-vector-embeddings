@@ -32,6 +32,9 @@ echo $env:APIFY_API_TOKEN
 
 If not, please add `OPENAI_API_KEY` and `APIFY_API_TOKEN` to your user environment variables and restart your terminal.
 
+> [!NOTE] 
+> No **HuggingFace API token** is required to run this server. The embeddings are computed using the public `all-MiniLM-L6-v2` model from the `sentence-transformers` library, which automatically downloads and caches the model locally (~80MB) on the first run.
+
 ## Usage
 
 ### Via Claude Desktop
@@ -51,4 +54,14 @@ Add to your `claude_desktop_config.json`:
 To manually test and interact with the tools during development:
 ```bash
 uv run mcp-inspector job_matcher_mcp.py
+```
+
+1. Run **`scrape_jobs`** with a max limit: `{"max_results_per_query": 10}`. Note the `csv_path` it returns.
+2. Run **`score_jobs`** providing the CSV path from step 1: `{"csv_path": "data/raw_jobs_...csv"}`. This step computes the embeddings and saves them in-place.
+3. Run **`get_top_jobs`** providing the embedded CSV: `{"csv_path": "data/raw_jobs_...csv"}`. Wait for the OpenAI summaries to generate.
+
+## Tests
+To run the automated test suite for scoring mechanisms and pipeline correctness:
+```bash
+uv run pytest tests/ -v
 ```

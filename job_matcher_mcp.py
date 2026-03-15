@@ -1,0 +1,288 @@
+import os
+import sys
+import json
+import asyncio
+import logging
+from datetime import datetime
+from pathlib import Path
+
+import numpy as np
+import pandas as pd
+from dotenv import load_dotenv
+from mcp.server.fastmcp import FastMCP
+from sklearn.metrics.pairwise import cosine_similarity
+from sentence_transformers import SentenceTransformer
+from openai import AsyncOpenAI
+
+from job_scorer import get_job_text, profile_to_text, embed_texts
+from scraper import scrape
+
+# ── Configuration & Initialization ──────────────────────────────────────────
+
+load_dotenv()  # loads .env; does NOT override Windows env vars automatically
+
+# Logging to stderr only — stdout is reserved for MCP protocol
+logging.basicConfig(
+    stream=sys.stderr,
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
+
+mcp = FastMCP("job-matcher")
+
+# Global singleton for the embedding model (loaded at runtime)
+_model: SentenceTransformer | None = None
+
+def get_model() -> SentenceTransformer:
+    """Lazy load the embedding model to avoid slowing down imports/tests."""
+    global _model
+    if _model is None:
+        model_name = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
+        logging.info(f"Loading embedding model '{model_name}'...")
+        _model = SentenceTransformer(model_name)
+        logging.info("Embedding model ready.")
+    return _model
+
+# ── Data Normalisation ───────────────────────────────────────────────────────
+
+COLUMN_RENAME_MAP = {
+    "salary_json_min": "salary_min",
+    "salary_json_max": "salary_max",
+    "salary_json_currency": "salary_currency",
+    "salary_json_unit": "salary_unit",
+    "workplace_type_enum": "workplace_type",
+}
+
+def normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalise DataFrame columns per TASK.md schema.
+    Applies immediately after pd.read_csv().
+    """
+    # 1. Strip whitespace from column names
+    df.columns = df.columns.str.strip()
+    # 2. Lowercase + replace spaces with underscores
+    df.columns = df.columns.str.lower().str.replace(" ", "_", regex=False)
+    # 3. Apply explicit rename map
+    df = df.rename(columns=COLUMN_RENAME_MAP)
+    return df
+
+# ── MCP Tools ───────────────────────────────────────────────────────────────
+
+@mcp.tool()
+async def scrape_jobs(
+    keywords: list[str] | None = None,
+    locations: list[str] | None = None,
+    max_results_per_query: int = 100,
+    output_path: str | None = None,
+) -> dict:
+    """
+    Scrape job postings matching keywords × locations.
+    Uses Apify (or equivalent) in the background.
+    """
+    DEFAULT_KEYWORDS = ["GTM engineer"]
+    DEFAULT_LOCATIONS = ["Berlin", "London", "New York", "San Francisco", "Boston", "US remote"]
+    
+    keywords = keywords or DEFAULT_KEYWORDS
+    locations = locations or DEFAULT_LOCATIONS
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = output_path or f"data/raw_jobs_{timestamp}.csv"
+    Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+
+    logging.info(f"Scraping jobs for keywords={keywords}, locations={locations}")
+    
+    df = scrape(keywords, locations, max_results_per_query)
+    if not df.empty:
+        df = normalise_columns(df)
+        
+    df.to_csv(out_path, index=False)
+    logging.info(f"Scraped {len(df)} jobs → {out_path}")
+    
+    return {
+        "status": "ok",
+        "csv_path": out_path,
+        "jobs_scraped": len(df),
+        "queries_run": len(keywords) * len(locations)
+    }
+
+
+@mcp.tool()
+async def score_jobs(
+    csv_path: str,
+    embed_model: str | None = None,
+    force_reembed: bool = False,
+) -> dict:
+    """
+    Compute and cache job embeddings.
+    """
+    df = pd.read_csv(csv_path)
+    df = normalise_columns(df)
+    
+    model = get_model()
+    model_name = embed_model or os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
+    
+    if "embedding" not in df.columns:
+        df["embedding"] = None
+    if "embedding_model" not in df.columns:
+        df["embedding_model"] = None
+        
+    mask = df["embedding"].isna() | (df["embedding_model"] != model_name)
+    if force_reembed:
+        mask = pd.Series(True, index=df.index)
+        
+    to_embed = df[mask]
+    if not to_embed.empty:
+        logging.info(f"Embedding {len(to_embed)} new records...")
+        df.loc[mask, "_clean_text"] = to_embed.apply(get_job_text, axis=1)
+        embeddings = embed_texts(df.loc[mask, "_clean_text"].tolist(), model)
+        df.loc[mask, "embedding"] = [json.dumps(e.tolist()) for e in embeddings]
+        df.loc[mask, "embedding_model"] = model_name
+        df = df.drop(columns=["_clean_text"], errors="ignore")
+    
+    df.to_csv(csv_path, index=False)
+    
+    return {
+        "status": "ok",
+        "csv_path": csv_path,
+        "embedded": len(to_embed),
+        "skipped_cached": len(df) - len(to_embed),
+        "model_used": model_name
+    }
+
+
+async def _explain_job(client: AsyncOpenAI, model: str, candidate_summary: str, row: pd.Series) -> str:
+    EXPLAIN_PROMPT = """\
+You are a career advisor. Given a candidate profile summary and a job posting,
+write 2-3 sentences explaining why this job IS or IS NOT a good fit.
+Be specific: mention exact skill overlaps, domain matches, or gaps.
+No bullet points. Plain text only.
+
+Candidate: {candidate_summary}
+
+Job: {title} at {company} ({location})
+Similarity score: {score:.3f}
+Description: {description_snippet}
+Tech stack: {tech_stack}
+"""
+    try:
+        snippet = str(row.get("description_text", ""))[:600]
+        prompt = EXPLAIN_PROMPT.format(
+            candidate_summary=candidate_summary,
+            title=row.get("title", ""),
+            company=row.get("company", ""),
+            location=row.get("location", ""),
+            score=row.get("similarity_score", 0.0),
+            description_snippet=snippet,
+            tech_stack=row.get("tech_stack", "")
+        )
+        
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=200,
+            temperature=0.3
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logging.error(f"Error explaining fit for {row.get('title')}: {e}")
+        return f"Error generating explanation: {e}"
+
+
+@mcp.tool()
+async def get_top_jobs(
+    csv_path: str,
+    profile_path: str | None = None,
+    top_n: int | None = None,
+    min_score: float = 0.0,
+    explain: bool = True,
+    output_dir: str | None = None,
+) -> dict:
+    """
+    Score, rank, explain, save, return top matches.
+    """
+    df = pd.read_csv(csv_path)
+    df = normalise_columns(df)
+    
+    if "embedding" not in df.columns or df["embedding"].isna().all():
+        raise ValueError("No embeddings found. Run score_jobs() first.")
+        
+    profile_path = profile_path or os.getenv("DEFAULT_PROFILE_JSON")
+    if not profile_path or not Path(profile_path).exists():
+        raise FileNotFoundError(f"Profile not found at {profile_path}")
+        
+    with open(profile_path, encoding="utf-8") as f:
+        profile = json.load(f)
+        
+    profile_text = profile_to_text(profile)
+    model = get_model()
+    profile_vec = model.encode([profile_text], normalize_embeddings=True)[0]
+    
+    valid = df["embedding"].notna()
+    job_vecs = np.array([json.loads(e) for e in df.loc[valid, "embedding"]])
+    
+    scores = cosine_similarity([profile_vec], job_vecs)[0]
+    df.loc[valid, "similarity_score"] = scores
+    
+    df = df.sort_values("similarity_score", ascending=False).reset_index(drop=True)
+    if min_score > 0:
+        df = df[df["similarity_score"] >= min_score]
+        
+    effective_top_n = top_n or int(os.getenv("DEFAULT_TOP_N", 10))
+    df_top = df.head(effective_top_n).copy()
+    
+    if explain:
+        if "fit_explanation" not in df_top.columns:
+            df_top["fit_explanation"] = None
+            
+        mask = df_top["fit_explanation"].isna()
+        if mask.any():
+            client = AsyncOpenAI()
+            llm_model = os.getenv("OPENAI_EXPLAIN_MODEL", "gpt-4o-mini")
+            candidate_summary = profile.get("summary", {}).get("elevator_pitch", "")
+            
+            tasks = [
+                _explain_job(client, llm_model, candidate_summary, row)
+                for _, row in df_top[mask].iterrows()
+            ]
+            explanations = await asyncio.gather(*tasks)
+            df_top.loc[mask, "fit_explanation"] = explanations
+            
+    # Save ranked CSV
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = output_dir or os.getenv("DEFAULT_OUTPUT_DIR", "output/")
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
+    out_path = Path(out_dir) / f"jobs_ranked_{timestamp}.csv"
+    
+    df_out = df_top.drop(columns=["embedding", "embedding_model"], errors="ignore")
+    df_out.to_csv(out_path, index=False)
+    
+    # Format return dictionary
+    ret_cols = [
+        "title", "company", "location", "salary", "seniority", 
+        "workplace_type", "tech_stack", "min_years_exp", "url", 
+        "similarity_score"
+    ]
+    if explain:
+        ret_cols.append("fit_explanation")
+        
+    # intersect with existing columns safely
+    ret_cols = [c for c in ret_cols if c in df_top.columns]
+    
+    top_jobs_json = df_top[ret_cols].to_dict(orient="records")
+    
+    return {
+        "status": "ok",
+        "output_csv": str(out_path),
+        "total_scored": len(valid) if sum(valid) else 0,
+        "returned": len(df_top),
+        "score_range": {
+            "max": float(scores.max()) if len(scores) else 0.0,
+            "min": float(scores.min()) if len(scores) else 0.0,
+            "median": float(np.median(scores)) if len(scores) else 0.0,
+        },
+        "top_jobs": top_jobs_json
+    }
+
+
+if __name__ == "__main__":
+    mcp.run(transport="stdio")

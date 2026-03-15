@@ -1,0 +1,21 @@
+title,company,location,description_text,tech_stack,salary,seniority,expected_rank_tier
+GTM Engineer,Tapcheck,Remote,"Building modern pipeline for RevOps using n8n, Clay, Salesforce. We are looking for an agentic engineer to orchestrate multiple APIs and scrapers to pull and normalize unstructured data. Heavy focus on Python, SQL, and LLMs. You will build autonomous systems to save manual qualification time.","['Python', 'SQL', 'n8n', 'Clay', 'Salesforce', 'LLM']",USD 150000,Mid,top
+ML Engineer,Google,New York,"Looking for ML engineer to deploy LLM pipelines using PyTorch, GCP, and Python. Transformers expertise needed. You will work on HuggingFace embeddings, autonomous systems, and advanced AI agentic workflows in GCP Vertex AI.","['Python', 'PyTorch', 'GCP', 'LLM', 'HuggingFace']",USD 180000,Senior,top
+Data Scientist,Meta,San Francisco,"Analyze complex datasets using advanced machine learning. Python, R, and strong statistical modeling background. A/B testing growth. Build data pipelines leveraging LLMs and predictive models.","['Python', 'R', 'Machine Learning', 'A/B testing', 'LLM']",USD 160000,Senior,top
+Solutions Engineer,Stripe,London,"Technical pre-sales and integration for our payments API. Must know REST, Python, JavaScript. Client facing. Growth engineer mindset for RevOps and technical integration with CRMs like Salesforce.","['Python', 'JavaScript', 'REST', 'API', 'Salesforce']",GBP 90000,Mid,top
+LLM Engineer,Anthropic,Remote,"Train and fine tune large language models. Strong Python, CUDA, distributed systems. Working with HuggingFace, embeddings, and large scale data pipelines to advance autonomous agents.","['Python', 'CUDA', 'LLM', 'HuggingFace', 'Embeddings']",USD 200000,Lead,top
+Sales Engineer,Twilio,Austin,"Support sales team. Basic API knowledge needed. Mostly writing integration docs.","['API']",USD 120000,Mid,mid
+Product Manager,Notion,San Francisco,"Manage our new AI features rollout. Work with engineering and design.","['Product Management']",USD 160000,Senior,mid
+Data Analyst,Spotify,New York,"Write SQL queries and build Looker dashboards for marketing team.","['SQL', 'Looker']",USD 110000,Junior,mid
+DevOps Engineer,AWS,Seattle,"Maintain CI/CD pipelines and infrastructure. Kubernetes, Terraform, AWS.","['Kubernetes', 'Terraform', 'AWS']",USD 150000,Senior,mid
+Backend Engineer,Uber,San Francisco,"Go and Java microservices development. High throughput systems.","['Go', 'Java']",USD 170000,Senior,mid
+Frontend Developer,Airbnb,Remote,"React and TypeScript frontend work. Building UI components.","['React', 'TypeScript']",USD 140000,Mid,mid
+Fullstack Engineer,Netflix,Los Gatos,"Node.js backend with React frontend. Consumer facing site.","['Node.js', 'React']",USD 160000,Senior,mid
+Database Administrator,Oracle,Austin,"Manage large scale Oracle deployments, backup recovery.","['Oracle', 'SQL']",USD 130000,Senior,mid
+QA Automation,Atlassian,Sydney,"Write Selenium and Cypress test suites. CI integration.","['Selenium', 'Cypress']",110000 AUD,Mid,mid
+Security Engineer,Cloudflare,Remote,"Network security, threat models, pentesting.","['Security', 'Pentesting']",USD 150000,Mid,mid
+Civil Engineer,Bechtel,Houston,"Design bridges and load bearing structures. AutoCAD.","['AutoCAD']",USD 110000,Senior,bottom
+Registered Nurse,Mayo Clinic,Rochester,"Patient care in ICU. 12 hour shifts.","[]",USD 80000,Mid,bottom
+Warehouse Supervisor,Amazon,Dallas,"Manage 50+ warehouse workers and logistics. Shift scheduling.","[]",USD 65000,Mid,bottom
+HR Manager,Target,Minneapolis,"Employee onboarding, compliance, benefits administration.","[]",USD 90000,Senior,bottom
+Accountant,Deloitte,Chicago,"Tax preparation and audit for enterprise clients. CPA required.","['Excel', 'Tax']",USD 100000,Senior,bottom
