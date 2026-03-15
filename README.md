@@ -51,9 +51,9 @@ Add to your `claude_desktop_config.json`:
 ```
 
 ### Via MCP Inspector (manual testing)
-To manually test and interact with the tools during development:
+To manually test and interact with the tools during development, rely on the official Node-based inspector to connect strictly to the `uv` run environment:
 ```bash
-uv run mcp-inspector job_matcher_mcp.py
+npx -y @modelcontextprotocol/inspector uv run job_matcher_mcp.py
 ```
 
 1. Run **`scrape_jobs`** with a max limit: `{"max_results_per_query": 10}`. Note the `csv_path` it returns.
