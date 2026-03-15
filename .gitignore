@@ -152,7 +152,7 @@ venv.bak/
 .ropeproject
 
 # mkdocs documentation
-/site
+# /site
 
 # mypy
 .mypy_cache/
@@ -205,3 +205,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project-specific
+
+# Apify raw export (large file, regenerable)
+_internal/apify_raw_export.json
+_internal/apify_raw_export.csv
+
+# Jupyter
+*.nbconvert.ipynb
