@@ -209,8 +209,10 @@ __marimo__/
 # Project-specific
 
 # Apify raw export (large file, regenerable)
-_internal/apify_raw_export.json
-_internal/apify_raw_export.csv
+data/apify_raw_export.csv
+
+# Apify docs 
+apify_docs/
 
 # Jupyter
 *.nbconvert.ipynb
