@@ -41,6 +41,8 @@ EMBED_COL = "embedding"             # output: embedding stored as JSON string
 SCORE_COL = "similarity_score"      # output: cosine similarity 0.0–1.0
 
 
+import logging
+
 # ── Text cleaning ─────────────────────────────────────────────────────────────
 
 def clean_html(text: str) -> str:
@@ -143,11 +145,11 @@ def profile_to_text(profile: dict) -> str:
 
 def embed_texts(texts: list[str], model: SentenceTransformer, batch_size: int = 64) -> np.ndarray:
     """Embed a list of texts, showing progress."""
-    print(f"  Embedding {len(texts)} texts in batches of {batch_size}...")
+    logging.info(f"  Embedding {len(texts)} texts in batches of {batch_size}...")
     embeddings = model.encode(
         texts,
         batch_size=batch_size,
-        show_progress_bar=True,
+        show_progress_bar=False,
         convert_to_numpy=True,
         normalize_embeddings=True,   # L2-normalize → cosine = dot product
     )

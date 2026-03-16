@@ -16,5 +16,12 @@ dependencies = [
     "apify-client>=1.8",
     "tqdm>=4.66",
 ]
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+]
 
-
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

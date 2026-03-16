@@ -64,6 +64,8 @@ def normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
     df.columns = df.columns.str.lower().str.replace(" ", "_", regex=False)
     # 3. Apply explicit rename map
     df = df.rename(columns=COLUMN_RENAME_MAP)
+    # 4. Remove duplicate columns (keep first occurrence)
+    df = df.loc[:, ~df.columns.duplicated(keep="first")]
     return df
 
 # ── MCP Tools ───────────────────────────────────────────────────────────────
@@ -73,6 +75,8 @@ async def scrape_jobs(
     keywords: list[str] | None = None,
     locations: list[str] | None = None,
     max_results_per_query: int = 100,
+    job_domain: str | None = None,
+    max_total_queries: int | None = None,
     output_path: str | None = None,
 ) -> dict:
     """
@@ -82,16 +86,27 @@ async def scrape_jobs(
     DEFAULT_KEYWORDS = ["GTM engineer"]
     DEFAULT_LOCATIONS = ["Berlin", "London", "New York", "San Francisco", "Boston", "US remote"]
     
+    max_total_queries = max_total_queries or int(os.getenv("MAX_TOTAL_QUERIES", 8))
+    
     keywords = keywords or DEFAULT_KEYWORDS
     locations = locations or DEFAULT_LOCATIONS
+
+    # Safety cap
+    total_requested = len(keywords) * len(locations)
+    if total_requested > max_total_queries:
+        logging.warning(f"Total queries {total_requested} exceeds safety cap {max_total_queries}. Truncating.")
+        # Simple truncation: take first N combinations
+        flat_queries = [(kw, loc) for kw in keywords for loc in locations][:max_total_queries]
+        keywords = sorted(list(set(q[0] for q in flat_queries)))
+        locations = sorted(list(set(q[1] for q in flat_queries)))
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = output_path or f"data/raw_jobs_{timestamp}.csv"
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
-    logging.info(f"Scraping jobs for keywords={keywords}, locations={locations}")
+    logging.info(f"Scraping jobs for keywords={keywords}, locations={locations}, domain={job_domain}")
     
-    df = scrape(keywords, locations, max_results_per_query)
+    df = await scrape(keywords, locations, max_results_per_query, job_domain=job_domain)
     if not df.empty:
         df = normalise_columns(df)
         
@@ -102,7 +117,7 @@ async def scrape_jobs(
         "status": "ok",
         "csv_path": out_path,
         "jobs_scraped": len(df),
-        "queries_run": len(keywords) * len(locations)
+        "queries_run": min(total_requested, max_total_queries)
     }
 
 
@@ -196,13 +211,57 @@ async def get_top_jobs(
     min_score: float = 0.0,
     explain: bool = True,
     output_dir: str | None = None,
+    # NEW FILTERS with defaults from env:
+    exclude_seniority: list[str] | None = None,
+    employment_types: list[str] | None = None,
+    min_salary: float | None = None,
+    relevant_only: bool = True,
 ) -> dict:
     """
     Score, rank, explain, save, return top matches.
     """
     df = pd.read_csv(csv_path)
     df = normalise_columns(df)
+    original_count = len(df)
     
+    # ── Resolve Defaults ───────────────────────────────────────────────────
+    if exclude_seniority is None:
+        raw = os.getenv("DEFAULT_EXCLUDE_SENIORITY", "")
+        exclude_seniority = [s.strip() for s in raw.split(",") if s.strip()]
+        
+    if employment_types is None:
+        raw = os.getenv("DEFAULT_EMPLOYMENT_TYPE", "")
+        employment_types = [e.strip() for e in raw.split(",") if e.strip()]
+        
+    if min_salary is None:
+        min_salary = float(os.getenv("DEFAULT_MIN_SALARY", 0))
+
+    # ── Pre-filters ────────────────────────────────────────────────────────
+    if relevant_only and "is_relevant" in df.columns:
+        df = df[df["is_relevant"].astype(str).str.lower() != "false"]
+    
+    if exclude_seniority:
+        excl = [s.lower() for s in exclude_seniority]
+        df = df[~df["seniority"].astype(str).str.lower().isin(excl)]
+        
+    if employment_types:
+        emp = [e.lower() for e in employment_types]
+        df = df[df["employment_type"].astype(str).str.lower().isin(emp)]
+        
+    if min_salary and "salary_min" in df.columns:
+        df = df[pd.to_numeric(df["salary_min"], errors="coerce").fillna(0) >= min_salary]
+        
+    logging.info(f"After pre-filters: {len(df)} rows remain from {original_count}")
+    
+    if df.empty:
+        return {
+            "status": "ok",
+            "message": "No jobs match the given filters.",
+            "total_scored": 0,
+            "returned": 0,
+            "top_jobs": []
+        }
+
     if "embedding" not in df.columns or df["embedding"].isna().all():
         raise ValueError("No embeddings found. Run score_jobs() first.")
         
@@ -258,7 +317,7 @@ async def get_top_jobs(
     
     # Format return dictionary
     ret_cols = [
-        "title", "company", "location", "salary", "seniority", 
+        "title", "company", "location", "salary", "seniority", "employment_type",
         "workplace_type", "tech_stack", "min_years_exp", "url", 
         "similarity_score"
     ]
@@ -281,6 +340,35 @@ async def get_top_jobs(
             "median": float(np.median(scores)) if len(scores) else 0.0,
         },
         "top_jobs": top_jobs_json
+    }
+
+
+@mcp.tool()
+async def list_saved_csvs() -> dict:
+    """
+    List all CSV files in data/ and output/ directories.
+    Useful for inspecting scraped or ranked data.
+    """
+    data_dir = os.getenv("DEFAULT_DATA_DIR", "data/")
+    out_dir = os.getenv("DEFAULT_OUTPUT_DIR", "output/")
+    
+    files = []
+    for d in [data_dir, out_dir]:
+        path = Path(d)
+        if path.exists():
+            for f in path.glob("*.csv"):
+                stats = f.stat()
+                files.append({
+                    "name": f.name,
+                    "location": path.name,
+                    "path": str(f),
+                    "size_kb": round(stats.st_size / 1024, 2),
+                    "modified": datetime.fromtimestamp(stats.st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+                })
+                
+    return {
+        "status": "ok",
+        "files": sorted(files, key=lambda x: x["modified"], reverse=True)
     }
 
 

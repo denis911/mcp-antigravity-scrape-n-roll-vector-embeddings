@@ -2,58 +2,102 @@ import os
 import json
 import logging
 import time
+import asyncio
 import pandas as pd
 from apify_client import ApifyClient
 from openai import OpenAI
 
-ACTOR_PRIMARY = "shahidirfan/builtin-jobs-scraper"  # pay-per-usage only
-ACTOR_FALLBACK = "IhQuCmT40q1tetuv3"  # easyapi/builtin-jobs-scraper ($19.99/mo)
+SOURCE_MAP = {
+    # BuiltIn — US cities
+    "builtin": [
+        "New York", "San Francisco", "Boston", "Chicago", "Austin",
+        "Seattle", "Denver", "Los Angeles", "Remote", "US remote", "USA"
+    ],
+    # LinkedIn — global, requires different Apify actor
+    "linkedin": [
+        "London", "Berlin", "Amsterdam", "Paris", "Prague", "Vienna",
+        "Zurich", "Munich", "Barcelona", "Stockholm", "Copenhagen",
+        "Warsaw", "Remote Europe", "EU remote"
+    ],
+}
 
-def scrape_apify(start_urls: list[str], max_items: int) -> list[dict]:
+APIFY_ACTORS = {
+    "builtin": {
+        "primary": "shahidirfan/builtin-jobs-scraper",
+        "fallback": "IhQuCmT40q1tetuv3",
+    },
+    "linkedin": {
+        "primary": "nikhuge/advanced-linkedin-jobs-scraper-with-ai",  
+        "fallback": "scrapier/linkedin-search-jobs-scraper",
+    },
+}
+
+def _scrape_single_url(client: ApifyClient, url: str, actors: dict, max_items: int) -> list[dict]:
+    """Blocking call to scrape a single URL, intended for run_in_executor."""
+    logging.info(f"Scraping URL: {url}")
+    run_input = {
+        "startUrl": url,
+        "results_wanted": max_items,
+        "max_pages": 100
+    }
+    try:
+        try:
+            logging.info(f"Calling primary actor: {actors['primary']}")
+            run = client.actor(actors['primary']).call(run_input=run_input)
+        except Exception as e:
+            error_msg = str(e).lower()
+            if any(k in error_msg for k in ["subscription", "payment", "paid", "403"]):
+                logging.warning(f"Primary actor restricted. Falling back to {actors['fallback']}")
+                run = client.actor(actors['fallback']).call(run_input=run_input)
+            else:
+                raise
+
+        dataset_id = run["defaultDatasetId"]
+        items = list(client.dataset(dataset_id).iterate_items())
+        logging.info(f"Got {len(items)} items from {url}")
+        return items
+    except Exception as e:
+        logging.error(f"Error scraping {url}: {e}")
+        return []
+
+async def scrape_apify(urls_by_source: dict[str, list[str]], max_items: int) -> list[dict]:
     token = os.environ.get("APIFY_API_TOKEN")
     if not token:
         raise ValueError("APIFY_API_TOKEN environment variable is not set.")
         
     client = ApifyClient(token)
-    all_results = []
+    loop = asyncio.get_event_loop()
     
-    for i, url in enumerate(start_urls, 1):
-        logging.info(f"Scraping URL {i}/{len(start_urls)}: {url}")
-        run_input = {
-            "startUrl": url,
-            "results_wanted": max_items,
-            "max_pages": 100
-        }
-        try:
-            try:
-                logging.info(f"Calling primary actor: {ACTOR_PRIMARY}")
-                run = client.actor(ACTOR_PRIMARY).call(run_input=run_input)
-            except Exception as e:
-                error_msg = str(e).lower()
-                if "subscription" in error_msg or "payment" in error_msg or "paid" in error_msg or "403" in error_msg:
-                    logging.warning(f"Primary actor restricted. Falling back to {ACTOR_FALLBACK}")
-                    run = client.actor(ACTOR_FALLBACK).call(run_input=run_input)
-                else:
-                    raise
-
-            dataset_id = run["defaultDatasetId"]
-            items = list(client.dataset(dataset_id).iterate_items())
-            logging.info(f"Got {len(items)} items from {url}")
-            all_results.extend(items)
-        except Exception as e:
-            logging.error(f"Error scraping {url}: {e}")
+    tasks = []
+    for source, urls in urls_by_source.items():
+        actors = APIFY_ACTORS.get(source, APIFY_ACTORS["builtin"])
+        for url in urls:
+            tasks.append(loop.run_in_executor(None, _scrape_single_url, client, url, actors, max_items))
+            
+    if not tasks:
+        return []
+        
+    results = await asyncio.gather(*tasks)
+    
+    all_results = []
+    for r in results:
+        all_results.extend(r)
             
     # Dedup by URL
     seen_urls = set()
-    results = []
+    deduped = []
     for item in all_results:
         item_url = item.get("url")
         if item_url and item_url not in seen_urls:
             seen_urls.add(item_url)
-            results.append(item)
+            deduped.append(item)
             
     # Normalize missing fields mapped by different actors
-    for item in results:
+    for item in deduped:
+        # Standardize workplace_type early to avoid duplicate column issues
+        if not item.get("workplace_type") and item.get("workType"):
+            item["workplace_type"] = item["workType"]
+            
         if not item.get("description") and item.get("description_text"):
             item["description"] = item["description_text"]
         if not item.get("postedDate") and item.get("date_posted"):
@@ -68,38 +112,60 @@ def scrape_apify(start_urls: list[str], max_items: int) -> list[dict]:
             elif min_val:
                 item["salary"] = f"{currency} {min_val:,}+"
 
-        if not item.get("workType") and item.get("workplace_type"):
-            item["workType"] = item["workplace_type"]
-
         if not item.get("experienceLevel") and item.get("seniority"):
             item["experienceLevel"] = item["seniority"]
 
         if not item.get("category_raw") and item.get("category"):
             item["category_raw"] = item["category"]
 
-    return results
+    return deduped
 
-def extract_structured_data(raw_data: list[dict], model: str = "gpt-4o-mini", batch_size: int = 20) -> list[dict]:
-    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-    if not client.api_key:
-        raise ValueError("OPENAI_API_KEY environment variable is not set.")
-        
-    EXTRACTION_PROMPT = """
-You are a GTM (Go-To-Market) Engineering expert. Analyze the following job descriptions and extract structured data.
+DOMAIN_PROMPTS = {
+    "gtm": """
+You are a GTM Engineering expert. Identify if the role is a Technical GTM role
+(GTM Engineer, RevOps Engineer, Growth Engineer, Sales Engineer, Solutions Engineer).
+Mark is_relevant=False for: pure Sales/Marketing, generic Software Engineering with no GTM tools.
+""",
+    "sales": """
+You are an enterprise sales recruiter. Identify if the role is a B2B or enterprise sales role
+(Account Executive, Sales Director, Channel Manager, Partner Manager, Solutions Consultant,
+Business Development, Sales Engineer).
+Mark is_relevant=False for: retail/consumer sales, inside sales SDR/BDR with no closing responsibility,
+pure technical engineering with no customer-facing element.
+""",
+    "biotech": """
+You are a computational biology recruiter. Identify if the role involves bioinformatics,
+computational biology, genomics, ML in life sciences, or clinical data science
+(Bioinformatics Engineer, Computational Biologist, ML Research Scientist - Life Sciences,
+Data Scientist - Pharma, Genomics Engineer).
+Mark is_relevant=False for: wet lab biology with no computational component, general software
+engineering with no life sciences domain.
+""",
+    "data": """
+You are a data engineering and ML recruiter. Identify if the role is a data/ML/AI engineering role
+(Data Engineer, ML Engineer, Data Scientist, Analytics Engineer, AI Engineer, LLM Engineer).
+Mark is_relevant=False for: pure BI/reporting with no engineering, data entry, database admin
+with no ML component.
+""",
+    "any": """
+You are a generalist recruiter. Accept all professional roles. Set is_relevant=True for any
+non-spam, legitimate job posting. Mark is_relevant=False only for obvious spam, duplicate postings,
+or completely irrelevant roles (e.g. manual labour when searching for tech roles).
+""",
+}
 
-### OBJECTIVE:
-1. **Relevancy Filter**: Identify if the role is a "Technical GTM" role (e.g., GTM Engineer, Growth Engineer, Sales Engineer, RevOps Engineer, Fullstack Growth). 
-   - Skip pure generic Software Engineering roles that have zero mention of revenue tools, CRM integrations, or growth experiments.
-   - Skip pure non-technical Sales/Marketing roles (e.g., BDR, Account Executive, Content Manager).
+EXTRACTION_PROMPT_TEMPLATE = """
+{domain_instructions}
 
-2. **Extraction**:
-   - `is_gtm_technical`: Boolean (True if relevant).
-   - `tech_stack`: List of SPECIFIC GTM or data tools from the text (e.g. Clay, n8n, Salesforce, HubSpot, dbt, etc.). 
-   - `seniority`: Junior, Mid, Senior, Staff, Lead, Head, or Manager.
-   - `min_years_exp`: Minimum years of experience required (Integer).
-   - `salary_min`: Minimum base salary (USD, numeric).
-   - `salary_max`: Maximum base salary (USD, numeric).
-   - `reason`: Brief explanation for the relevancy decision.
+### EXTRACTION (for ALL roles, regardless of relevancy):
+- `is_relevant`: Boolean (True if relevant per domain definition above).
+- `tech_stack`: List of SPECIFIC tools, platforms, or technologies mentioned.
+- `seniority`: Intern, Junior, Mid, Senior, Staff, Lead, Head, Director, VP, or Manager.
+- `employment_type`: Full-time, Part-time, Contract, Freelance, or Internship.
+- `min_years_exp`: Minimum years of experience required (Integer, 0 if not specified).
+- `salary_min`: Minimum base salary (USD equivalent, numeric, null if not mentioned).
+- `salary_max`: Maximum base salary (USD equivalent, numeric, null if not mentioned).
+- `reason`: One sentence explaining the relevancy decision.
 
 ### INPUT DATA:
 {jobs_chunk}
@@ -109,9 +175,10 @@ Return a JSON array of objects, one per job in the same order. Use the following
 [
   {{
     "id": "original_id",
-    "is_gtm_technical": true,
+    "is_relevant": true,
     "tech_stack": ["tool1", "tool2"],
     "seniority": "Senior",
+    "employment_type": "Full-time",
     "min_years_exp": 5,
     "salary_min": 150000,
     "salary_max": 200000,
@@ -119,6 +186,14 @@ Return a JSON array of objects, one per job in the same order. Use the following
   }}
 ]
 """
+
+def extract_structured_data(raw_data: list[dict], domain: str = "any", model: str = "gpt-4o-mini", batch_size: int = 20) -> list[dict]:
+    client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
+    if not client.api_key:
+        raise ValueError("OPENAI_API_KEY environment variable is not set.")
+        
+    domain_instructions = DOMAIN_PROMPTS.get(domain, DOMAIN_PROMPTS["any"])
+    
     all_results = []
     
     for i in range(0, len(raw_data), batch_size):
@@ -137,7 +212,10 @@ Return a JSON array of objects, one per job in the same order. Use the following
                 model=model,
                 messages=[
                     {"role": "system", "content": "You are a precise data extraction specialist."},
-                    {"role": "user", "content": EXTRACTION_PROMPT.format(jobs_chunk=json.dumps(jobs_chunk, indent=2))}
+                    {"role": "user", "content": EXTRACTION_PROMPT_TEMPLATE.format(
+                        domain_instructions=domain_instructions,
+                        jobs_chunk=json.dumps(jobs_chunk, indent=2)
+                    )}
                 ],
                 response_format={"type": "json_object"}
             )
@@ -172,34 +250,79 @@ Return a JSON array of objects, one per job in the same order. Use the following
     return all_results
 
 
-def scrape(
+async def extract_structured_data_async(raw_data: list[dict], domain: str = "any", model: str = "gpt-4o-mini", batch_size: int = 20) -> list[dict]:
+    """Async wrapper for the blocking OpenAI extraction logic."""
+    import asyncio
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,
+        extract_structured_data,
+        raw_data, domain, model, batch_size
+    )
+
+
+DOMAIN_KEYWORD_MAP = {
+    "gtm": ["gtm", "revops", "revenue operations", "growth engineer", "sales engineer"],
+    "sales": ["account executive", "sales director", "channel", "partner manager",
+              "business development", "solutions consultant", "sales manager"],
+    "biotech": ["bioinformatics", "computational biology", "genomics", "pharma",
+                "life sciences", "clinical", "immunology", "drug discovery"],
+    "data": ["data scientist", "ml engineer", "machine learning", "data engineer",
+             "analytics engineer", "ai engineer", "llm engineer"],
+}
+
+def detect_domain(keywords: list[str]) -> str:
+    """Infer job_domain from keywords. Returns 'any' if ambiguous."""
+    kw_lower = " ".join(keywords).lower()
+    for domain, signals in DOMAIN_KEYWORD_MAP.items():
+        if any(s in kw_lower for s in signals):
+            return domain
+    return "any"
+
+
+def build_urls(keywords: list[str], locations: list[str]) -> dict[str, list[str]]:
+    """Returns {source_name: [url1, url2, ...]} grouped by scraping source."""
+    urls_by_source = {"builtin": [], "linkedin": []}
+
+    for kw in keywords:
+        for loc in locations:
+            kw_url = kw.replace(" ", "+")
+            loc_url = loc.replace(" ", "+")
+
+            # Determine source by location
+            if any(loc.lower() in l.lower() for l in SOURCE_MAP["linkedin"]):
+                url = f"https://www.linkedin.com/jobs/search/?keywords={kw_url}&location={loc_url}"
+                urls_by_source["linkedin"].append(url)
+            else:
+                url = f"https://builtin.com/jobs?search={kw_url}&location={loc_url}"
+                urls_by_source["builtin"].append(url)
+
+    return urls_by_source
+
+
+async def scrape(
     keywords: list[str],
     locations: list[str],
     max_per_query: int = 100,
+    job_domain: str | None = None,
 ) -> pd.DataFrame:
     """
     Returns a DataFrame with the canonical schema columns defined in TASK.md.
     Deduplication on (title, company, url) should be applied before returning.
     """
-    # Build BuiltIn start URLs from keywords & locations
-    # (BuiltIn typically relies on query params, mapping simple keywords for demonstration.
-    # In a real heavy use case, this maps exactly to BuiltIn search schema)
-    # E.g. https://builtin.com/jobs?search=GTM+Engineer&location=Berlin
-    start_urls = []
-    for kw in keywords:
-        for loc in locations:
-            kw_url = kw.replace(' ', '+')
-            loc_url = loc.replace(' ', '+')
-            start_urls.append(f"https://builtin.com/jobs?search={kw_url}&location={loc_url}")
-            
-    # Stage 1: Apify Extraction
-    logging.info(f"Starting Apify scrape for {len(start_urls)} queries...")
-    raw_results = scrape_apify(start_urls, max_per_query)
+    job_domain = job_domain or detect_domain(keywords)
+    logging.info(f"Using job_domain: {job_domain}")
+    
+    urls_by_source = build_urls(keywords, locations)
+    
+    # Stage 1: Async Apify Extraction
+    logging.info(f"Starting parallel Apify scrape...")
+    raw_results = await scrape_apify(urls_by_source, max_per_query)
     logging.info(f"Apify collected {len(raw_results)} unique items. Proceeding to LLM extraction...")
     
-    # Stage 2: OpenAI Structure Extraction
+    # Stage 2: Async OpenAI Structure Extraction
     if raw_results:
-        structured_results = extract_structured_data(raw_results)
+        structured_results = await extract_structured_data_async(raw_results, domain=job_domain)
     else:
         structured_results = []
         
@@ -210,8 +333,8 @@ def scrape(
         "title", "company", "category", "location", "date_posted", "description_html",
         "description_text", "salary_json_min", "salary_json_max", "salary_json_currency",
         "salary_json_unit", "hiring_remote_in", "workplace_type", "salary_range_short",
-        "seniority", "workplace_type_enum", "company_overview", "url", "source",
-        "description", "postedDate", "salary", "id", "is_gtm_technical", "tech_stack",
+        "seniority", "employment_type", "workplace_type_enum", "company_overview", "url", "source",
+        "description", "postedDate", "salary", "id", "is_relevant", "tech_stack",
         "min_years_exp", "salary_min", "salary_max", "reason"
     ]
     
