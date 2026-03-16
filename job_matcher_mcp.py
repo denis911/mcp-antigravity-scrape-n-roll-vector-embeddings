@@ -238,7 +238,8 @@ async def get_top_jobs(
 
     # ── Pre-filters ────────────────────────────────────────────────────────
     if relevant_only and "is_relevant" in df.columns:
-        df = df[df["is_relevant"].astype(str).str.lower() != "false"]
+        # Explicitly require "true" — treats NaN and empty as not relevant
+        df = df[df["is_relevant"].astype(str).str.lower() == "true"]
     
     if exclude_seniority:
         excl = [s.lower() for s in exclude_seniority]
