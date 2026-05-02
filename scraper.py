@@ -6,6 +6,7 @@ import asyncio
 import pandas as pd
 from apify_client import ApifyClient
 from openai import OpenAI
+from serper_scraper import get_raw_jobs_serper
 
 SOURCE_MAP = {
     # BuiltIn — US cities
@@ -313,12 +314,19 @@ async def scrape(
     job_domain = job_domain or detect_domain(keywords)
     logging.info(f"Using job_domain: {job_domain}")
     
-    urls_by_source = build_urls(keywords, locations)
+    backend = os.environ.get("SCRAPER_BACKEND", "apify").lower()
     
-    # Stage 1: Async Apify Extraction
-    logging.info(f"Starting parallel Apify scrape...")
-    raw_results = await scrape_apify(urls_by_source, max_per_query)
-    logging.info(f"Apify collected {len(raw_results)} unique items. Proceeding to LLM extraction...")
+    if backend == "serper":
+        logging.info(f"Starting parallel Serper scrape...")
+        raw_results = await get_raw_jobs_serper(keywords, locations)
+        logging.info(f"Serper collected {len(raw_results)} unique items. Proceeding to LLM extraction...")
+    else:
+        urls_by_source = build_urls(keywords, locations)
+        
+        # Stage 1: Async Apify Extraction
+        logging.info(f"Starting parallel Apify scrape...")
+        raw_results = await scrape_apify(urls_by_source, max_per_query)
+        logging.info(f"Apify collected {len(raw_results)} unique items. Proceeding to LLM extraction...")
     
     # Stage 2: Async OpenAI Structure Extraction
     if raw_results:
