@@ -1,6 +1,6 @@
 import pandas as pd
 from job_matcher_mcp import normalise_columns
-from scraper import detect_domain
+from extractor import detect_domain
 
 def test_normalise_columns():
     df = pd.DataFrame(columns=["salary_json_min", "workplace_type_enum", "description_text "])

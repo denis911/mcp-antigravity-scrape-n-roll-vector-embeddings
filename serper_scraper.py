@@ -4,11 +4,14 @@ import logging
 import requests
 import aiohttp
 from bs4 import BeautifulSoup
+import pandas as pd
+
+from extractor import extract_structured_data_async, detect_domain, ensure_canonical_columns
 
 SERPER_URL = "https://google.serper.dev/search"
 
 # Common ATS and job boards to restrict the search and get cleaner data
-ATS_DOMAINS = [
+DEFAULT_ATS_DOMAINS = [
     # --- Applicant Tracking Systems (ATS) ---
     "boards.greenhouse.io",
     "jobs.lever.co",
@@ -35,9 +38,9 @@ ATS_DOMAINS = [
     "eures.europa.eu",
 ]
 
-def build_serper_queries(keywords: list[str], locations: list[str]) -> list[str]:
+def build_serper_queries(keywords: list[str], locations: list[str], ats_domains: list[str]) -> list[str]:
     """Build Serper search queries using ATS footprints."""
-    domains_str = " OR ".join([f"site:{d}" for d in ATS_DOMAINS])
+    domains_str = " OR ".join([f"site:{d}" for d in ats_domains])
     ats_footprint = f"({domains_str})"
     
     queries = []
@@ -135,9 +138,9 @@ async def fetch_all_descriptions(organic_results: list[dict]) -> list[dict]:
             
     return enriched_results
 
-async def get_raw_jobs_serper(keywords: list[str], locations: list[str]) -> list[dict]:
+async def get_raw_jobs_serper(keywords: list[str], locations: list[str], ats_domains: list[str]) -> list[dict]:
     """High-level function to perform search and fetch phases."""
-    queries = build_serper_queries(keywords, locations)
+    queries = build_serper_queries(keywords, locations, ats_domains)
     
     logging.info(f"Generated {len(queries)} Serper queries based on ATS domains.")
     organic_results = await search_jobs_serper(queries)
@@ -146,3 +149,30 @@ async def get_raw_jobs_serper(keywords: list[str], locations: list[str]) -> list
     enriched_results = await fetch_all_descriptions(organic_results)
     
     return enriched_results
+
+async def scrape_serper(
+    keywords: list[str],
+    locations: list[str],
+    max_per_query: int = 100,  # Included for consistent interface though Serper is limited to its own paging
+    job_domain: str | None = None,
+    ats_domains: list[str] | None = None
+) -> pd.DataFrame:
+    """
+    Returns a DataFrame with the canonical schema columns defined in TASK.md
+    scraped via Serper.
+    """
+    job_domain = job_domain or detect_domain(keywords)
+    ats_domains = ats_domains or DEFAULT_ATS_DOMAINS
+    logging.info(f"Using job_domain: {job_domain}")
+    
+    logging.info(f"Starting parallel Serper scrape...")
+    raw_results = await get_raw_jobs_serper(keywords, locations, ats_domains)
+    logging.info(f"Serper collected {len(raw_results)} unique items. Proceeding to LLM extraction...")
+    
+    if raw_results:
+        structured_results = await extract_structured_data_async(raw_results, domain=job_domain)
+    else:
+        structured_results = []
+        
+    df = pd.DataFrame(structured_results)
+    return ensure_canonical_columns(df)

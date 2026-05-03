@@ -2,124 +2,7 @@ import os
 import json
 import logging
 import time
-import asyncio
-import pandas as pd
-from apify_client import ApifyClient
 from openai import OpenAI
-from serper_scraper import get_raw_jobs_serper
-
-SOURCE_MAP = {
-    # BuiltIn — US cities
-    "builtin": [
-        "New York", "San Francisco", "Boston", "Chicago", "Austin",
-        "Seattle", "Denver", "Los Angeles", "Remote", "US remote", "USA"
-    ],
-    # LinkedIn — global, requires different Apify actor
-    "linkedin": [
-        "London", "Berlin", "Amsterdam", "Paris", "Prague", "Vienna",
-        "Zurich", "Munich", "Barcelona", "Stockholm", "Copenhagen",
-        "Warsaw", "Remote Europe", "EU remote"
-    ],
-}
-
-APIFY_ACTORS = {
-    "builtin": {
-        "primary": "shahidirfan/builtin-jobs-scraper",
-        "fallback": "IhQuCmT40q1tetuv3",
-    },
-    "linkedin": {
-        "primary": "nikhuge/advanced-linkedin-jobs-scraper-with-ai",  
-        "fallback": "scrapier/linkedin-search-jobs-scraper",
-    },
-}
-
-def _scrape_single_url(client: ApifyClient, url: str, actors: dict, max_items: int) -> list[dict]:
-    """Blocking call to scrape a single URL, intended for run_in_executor."""
-    logging.info(f"Scraping URL: {url}")
-    run_input = {
-        "startUrl": url,
-        "results_wanted": max_items,
-        "max_pages": 100
-    }
-    try:
-        try:
-            logging.info(f"Calling primary actor: {actors['primary']}")
-            run = client.actor(actors['primary']).call(run_input=run_input)
-        except Exception as e:
-            error_msg = str(e).lower()
-            if any(k in error_msg for k in ["subscription", "payment", "paid", "403"]):
-                logging.warning(f"Primary actor restricted. Falling back to {actors['fallback']}")
-                run = client.actor(actors['fallback']).call(run_input=run_input)
-            else:
-                raise
-
-        dataset_id = run["defaultDatasetId"]
-        items = list(client.dataset(dataset_id).iterate_items())
-        logging.info(f"Got {len(items)} items from {url}")
-        return items
-    except Exception as e:
-        logging.error(f"Error scraping {url}: {e}")
-        return []
-
-async def scrape_apify(urls_by_source: dict[str, list[str]], max_items: int) -> list[dict]:
-    token = os.environ.get("APIFY_API_TOKEN")
-    if not token:
-        raise ValueError("APIFY_API_TOKEN environment variable is not set.")
-        
-    client = ApifyClient(token)
-    loop = asyncio.get_event_loop()
-    
-    tasks = []
-    for source, urls in urls_by_source.items():
-        actors = APIFY_ACTORS.get(source, APIFY_ACTORS["builtin"])
-        for url in urls:
-            tasks.append(loop.run_in_executor(None, _scrape_single_url, client, url, actors, max_items))
-            
-    if not tasks:
-        return []
-        
-    results = await asyncio.gather(*tasks)
-    
-    all_results = []
-    for r in results:
-        all_results.extend(r)
-            
-    # Dedup by URL
-    seen_urls = set()
-    deduped = []
-    for item in all_results:
-        item_url = item.get("url")
-        if item_url and item_url not in seen_urls:
-            seen_urls.add(item_url)
-            deduped.append(item)
-            
-    # Normalize missing fields mapped by different actors
-    for item in deduped:
-        # Standardize workplace_type early to avoid duplicate column issues
-        if not item.get("workplace_type") and item.get("workType"):
-            item["workplace_type"] = item["workType"]
-            
-        if not item.get("description") and item.get("description_text"):
-            item["description"] = item["description_text"]
-        if not item.get("postedDate") and item.get("date_posted"):
-            item["postedDate"] = item["date_posted"]
-            
-        if not item.get("salary") and item.get("salary_json_min"):
-            min_val = item.get("salary_json_min")
-            max_val = item.get("salary_json_max")
-            currency = item.get("salary_json_currency", "USD")
-            if min_val and max_val:
-                item["salary"] = f"{currency} {min_val:,} - {max_val:,}"
-            elif min_val:
-                item["salary"] = f"{currency} {min_val:,}+"
-
-        if not item.get("experienceLevel") and item.get("seniority"):
-            item["experienceLevel"] = item["seniority"]
-
-        if not item.get("category_raw") and item.get("category"):
-            item["category_raw"] = item["category"]
-
-    return deduped
 
 DOMAIN_PROMPTS = {
     "gtm": """
@@ -236,7 +119,6 @@ def extract_structured_data(raw_data: list[dict], domain: str = "any", model: st
             for j, res in enumerate(extracted):
                 item = batch[j].copy()
                 if res:
-                    # stringify list to store in CSV natively
                     if "tech_stack" in res and isinstance(res["tech_stack"], list):
                         res["tech_stack"] = json.dumps(res["tech_stack"])
                     item.update(res)
@@ -250,9 +132,7 @@ def extract_structured_data(raw_data: list[dict], domain: str = "any", model: st
         
     return all_results
 
-
 async def extract_structured_data_async(raw_data: list[dict], domain: str = "any", model: str = "gpt-4o-mini", batch_size: int = 20) -> list[dict]:
-    """Async wrapper for the blocking OpenAI extraction logic."""
     import asyncio
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(
@@ -260,7 +140,6 @@ async def extract_structured_data_async(raw_data: list[dict], domain: str = "any
         extract_structured_data,
         raw_data, domain, model, batch_size
     )
-
 
 DOMAIN_KEYWORD_MAP = {
     "gtm": ["gtm", "revops", "revenue operations", "growth engineer", "sales engineer"],
@@ -273,70 +152,15 @@ DOMAIN_KEYWORD_MAP = {
 }
 
 def detect_domain(keywords: list[str]) -> str:
-    """Infer job_domain from keywords. Returns 'any' if ambiguous."""
     kw_lower = " ".join(keywords).lower()
     for domain, signals in DOMAIN_KEYWORD_MAP.items():
         if any(s in kw_lower for s in signals):
             return domain
     return "any"
 
-
-def build_urls(keywords: list[str], locations: list[str]) -> dict[str, list[str]]:
-    """Returns {source_name: [url1, url2, ...]} grouped by scraping source."""
-    urls_by_source = {"builtin": [], "linkedin": []}
-
-    for kw in keywords:
-        for loc in locations:
-            kw_url = kw.replace(" ", "+")
-            loc_url = loc.replace(" ", "+")
-
-            # Determine source by location
-            if any(loc.lower() in l.lower() for l in SOURCE_MAP["linkedin"]):
-                url = f"https://www.linkedin.com/jobs/search/?keywords={kw_url}&location={loc_url}"
-                urls_by_source["linkedin"].append(url)
-            else:
-                url = f"https://builtin.com/jobs?search={kw_url}&location={loc_url}"
-                urls_by_source["builtin"].append(url)
-
-    return urls_by_source
-
-
-async def scrape(
-    keywords: list[str],
-    locations: list[str],
-    max_per_query: int = 100,
-    job_domain: str | None = None,
-) -> pd.DataFrame:
-    """
-    Returns a DataFrame with the canonical schema columns defined in TASK.md.
-    Deduplication on (title, company, url) should be applied before returning.
-    """
-    job_domain = job_domain or detect_domain(keywords)
-    logging.info(f"Using job_domain: {job_domain}")
-    
-    backend = os.environ.get("SCRAPER_BACKEND", "apify").lower()
-    
-    if backend == "serper":
-        logging.info(f"Starting parallel Serper scrape...")
-        raw_results = await get_raw_jobs_serper(keywords, locations)
-        logging.info(f"Serper collected {len(raw_results)} unique items. Proceeding to LLM extraction...")
-    else:
-        urls_by_source = build_urls(keywords, locations)
-        
-        # Stage 1: Async Apify Extraction
-        logging.info(f"Starting parallel Apify scrape...")
-        raw_results = await scrape_apify(urls_by_source, max_per_query)
-        logging.info(f"Apify collected {len(raw_results)} unique items. Proceeding to LLM extraction...")
-    
-    # Stage 2: Async OpenAI Structure Extraction
-    if raw_results:
-        structured_results = await extract_structured_data_async(raw_results, domain=job_domain)
-    else:
-        structured_results = []
-        
-    df = pd.DataFrame(structured_results)
-    
-    # Ensure all required canonical columns exist
+def ensure_canonical_columns(df):
+    """Ensure all required canonical columns exist and duplicates are dropped."""
+    import pandas as pd
     canonical_columns = [
         "title", "company", "category", "location", "date_posted", "description_html",
         "description_text", "salary_json_min", "salary_json_max", "salary_json_currency",

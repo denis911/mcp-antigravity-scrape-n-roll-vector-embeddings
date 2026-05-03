@@ -15,7 +15,8 @@ from sentence_transformers import SentenceTransformer
 from openai import AsyncOpenAI
 
 from job_scorer import get_job_text, profile_to_text, embed_texts
-from scraper import scrape
+from builtin_scraper import scrape_builtin
+from serper_scraper import scrape_serper
 
 # ── Configuration & Initialization ──────────────────────────────────────────
 
@@ -79,10 +80,20 @@ async def scrape_jobs(
     job_domain: str | None = None,
     max_total_queries: int | None = None,
     output_path: str | None = None,
+    source_map: dict | None = None,
+    ats_domains: list[str] | None = None,
 ) -> dict:
     """
     Scrape job postings matching keywords × locations.
-    Uses Apify (or equivalent) in the background.
+    Uses Apify (or equivalent) or Serper in the background depending on SCRAPER_BACKEND env var.
+
+    Parameters:
+    - keywords: List of job titles or keywords (e.g., ["Data Scientist", "ML Engineer"]).
+    - locations: List of locations to search in (e.g., ["Berlin", "London"]).
+    - source_map: (Optional) A dictionary overriding the routing of locations to scrapers. 
+      Format: {"linkedin": ["Berlin", "London"], "builtin": ["New York"]}
+    - ats_domains: (Optional) A list of domain footprints to restrict Google ATS search. 
+      Useful for EU startups. Example: ["wellfound.com", "ycombinator.com/jobs", "thehub.io", "topstartups.io"]
     """
     DEFAULT_KEYWORDS = ["GTM engineer"]
     DEFAULT_LOCATIONS = ["Berlin", "London", "New York", "San Francisco", "Boston", "US remote"]
@@ -107,7 +118,13 @@ async def scrape_jobs(
 
     logging.info(f"Scraping jobs for keywords={keywords}, locations={locations}, domain={job_domain}")
     
-    df = await scrape(keywords, locations, max_results_per_query, job_domain=job_domain)
+    backend = os.environ.get("SCRAPER_BACKEND", "apify").lower()
+    
+    if backend == "serper":
+        df = await scrape_serper(keywords, locations, max_results_per_query, job_domain=job_domain, ats_domains=ats_domains)
+    else:
+        df = await scrape_builtin(keywords, locations, max_results_per_query, job_domain=job_domain, source_map=source_map)
+        
     if not df.empty:
         df = normalise_columns(df)
         

@@ -6,7 +6,8 @@ from serper_scraper import build_serper_queries, search_jobs_serper
 def test_build_serper_queries():
     keywords = ["Data Scientist"]
     locations = ["Berlin"]
-    queries = build_serper_queries(keywords, locations)
+    ats_domains = ["boards.greenhouse.io", "jobs.lever.co"]
+    queries = build_serper_queries(keywords, locations, ats_domains)
     assert len(queries) == 1
     # Check that ATS domains are included
     assert "site:boards.greenhouse.io" in queries[0]

@@ -5,8 +5,9 @@ STDIO-based MCP server to collect, extract, and semantically rank job postings d
 ## What it does
 Builds a local MCP server (`job_matcher_mcp.py`) that orchestrates a smart pipeline:
 1. **Scrape & Extract** — fetches jobs by keyword + location and uses an LLM to extract structured data.
+   - **Modular Architecture**: Uses dedicated scraper modules (`builtin_scraper.py` for BuiltIn/Apify, `serper_scraper.py` for Google ATS footprints, and an empty `linkedin_scraper.py` ready for future extensions). Extraction logic is centralized in `extractor.py`.
    - **Dynamic Domains**: Auto-detects and optimizes extraction prompts for `gtm`, `sales`, `biotech`, or `data` roles.
-   - **Multi-Backend**: Supports scraping via Apify (routing US queries to BuiltIn and EU to LinkedIn) or the Google Serper API targeting specific ATS platforms (Greenhouse, Lever, etc.) directly.
+   - **Multi-Backend**: Supports scraping via Apify (routing US queries to BuiltIn and EU to LinkedIn) or the Google Serper API targeting specific ATS platforms (Greenhouse, Lever, etc.) directly. Both scrapers are highly parameterisable.
    - **Concurrent Processing**: Asynchronous HTML fetching and LLM extraction to drastically speed up parallel scrapes.
 2. **Embed** — computes and caches local HuggingFace embeddings for the descriptions (runs locally, completely free).
 3. **Filter & Score** — applies active pre-filters (salary floors, seniority exclusion, relevancy) before ranking by cosine similarity against your profile.
@@ -49,6 +50,13 @@ Available `.env` settings:
 - **`score_jobs`**: Computes local HuggingFace embeddings for a CSV (clean output without protocol corruption).
 - **`get_top_jobs`**: Ranks jobs against your `test_profile.json` applying configurable pre-filters (salary, seniority, etc.).
 - **`list_saved_csvs`**: Utility to view all cached CSV files in `data/` and `output/`. Backward compatible with older exports.
+
+## MCP Tool Best Practices
+
+To ensure LLM agents can effectively use the MCP server, we've implemented the following best practices in our tool descriptions (docstrings):
+- **Clear Formatting**: Using a `Parameters:` section ensures the LLM schema parser correctly reads and maps descriptions.
+- **Explicit Structures**: Providing the exact JSON key/value structure required for complex arguments (e.g., `{"linkedin": ["Berlin", "London"]}` for `source_map`).
+- **Concrete Examples**: Giving concrete strings like `"wellfound.com"` instead of vague descriptions ensures the LLM passes actual URL footprints to the `ats_domains` parameter instead of hallucinating.
 
 ## Usage
 
