@@ -51,6 +51,7 @@ COLUMN_RENAME_MAP = {
     "salary_json_currency": "salary_currency",
     "salary_json_unit": "salary_unit",
     "workplace_type_enum": "workplace_type",
+    "is_gtm_technical": "is_relevant",
 }
 
 def normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
