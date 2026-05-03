@@ -7,7 +7,7 @@ Builds a local MCP server (`job_matcher_mcp.py`) that orchestrates a smart pipel
 1. **Scrape & Extract** — fetches jobs by keyword + location and uses an LLM to extract structured data.
    - **Modular Architecture**: Uses dedicated scraper modules (`builtin_scraper.py` for BuiltIn/Apify, `serper_scraper.py` for Google ATS footprints, and an empty `linkedin_scraper.py` ready for future extensions). Extraction logic is centralized in `extractor.py`.
    - **Dynamic Domains**: Auto-detects and optimizes extraction prompts for `gtm`, `sales`, `biotech`, or `data` roles.
-   - **Multi-Backend**: Supports scraping via Apify (routing US queries to BuiltIn and EU to LinkedIn) or the Google Serper API targeting specific ATS platforms (Greenhouse, Lever, etc.) directly. Both scrapers are highly parameterisable.
+   - **Hybrid Routing**: Automatically routes US locations to BuiltIn (via Apify) and EU/Other locations to Google Serper (ATS footprints) within the same run, merging results seamlessly.
    - **Concurrent Processing**: Asynchronous HTML fetching and LLM extraction to drastically speed up parallel scrapes.
 2. **Embed** — computes and caches local HuggingFace embeddings for the descriptions (runs locally, completely free).
 3. **Filter & Score** — applies active pre-filters (salary floors, seniority exclusion, relevancy) before ranking by cosine similarity against your profile.
@@ -37,7 +37,7 @@ echo $env:SERPER_API_KEY
 ```
 
 Available `.env` settings:
-- `SCRAPER_BACKEND`: `apify` (default) or `serper` (uses Google Search footprints for ATS).
+- `SCRAPER_BACKEND`: *(Deprecated)* Location routing is now handled automatically via a hybrid approach.
 - `DEFAULT_JOB_DOMAIN`: `any`, `gtm`, `sales`, `biotech`, `data`.
 - `DEFAULT_MIN_SALARY`: Filter out jobs below this base salary (e.g. `80000`).
 - `DEFAULT_EXCLUDE_SENIORITY`: Comma-separated list (e.g. `Intern,Junior`).

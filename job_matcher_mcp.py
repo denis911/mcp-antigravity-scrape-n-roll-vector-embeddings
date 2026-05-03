@@ -15,7 +15,7 @@ from sentence_transformers import SentenceTransformer
 from openai import AsyncOpenAI
 
 from job_scorer import get_job_text, profile_to_text, embed_texts
-from builtin_scraper import scrape_builtin
+from builtin_scraper import scrape_builtin, DEFAULT_SOURCE_MAP
 from serper_scraper import scrape_serper
 
 # ── Configuration & Initialization ──────────────────────────────────────────
@@ -85,15 +85,26 @@ async def scrape_jobs(
 ) -> dict:
     """
     Scrape job postings matching keywords × locations.
-    Uses Apify (or equivalent) or Serper in the background depending on SCRAPER_BACKEND env var.
+    Automatically routes US locations to BuiltIn (via Apify) and EU/Other locations to Google Serper (ATS search) in a single run.
+    Results from both scrapers are merged into a single CSV.
 
     Parameters:
     - keywords: List of job titles or keywords (e.g., ["Data Scientist", "ML Engineer"]).
-    - locations: List of locations to search in (e.g., ["Berlin", "London"]).
+    - locations: List of locations to search in (e.g., ["Berlin", "London", "New York"]).
     - source_map: (Optional) A dictionary overriding the routing of locations to scrapers. 
-      Format: {"linkedin": ["Berlin", "London"], "builtin": ["New York"]}
-    - ats_domains: (Optional) A list of domain footprints to restrict Google ATS search. 
+      Format: {"builtin": ["New York", "Boston"], "linkedin": ["Berlin", "London"]}
+      Locations mapped to 'builtin' will use the Apify builtin scraper. All other locations will default to Serper.
+    - ats_domains: (Optional) A list of domain footprints to restrict Google ATS search (used for Serper routing). 
       Useful for EU startups. Example: ["wellfound.com", "ycombinator.com/jobs", "thehub.io", "topstartups.io"]
+
+    Example Usage:
+    scrape_jobs(
+        keywords=["AI Engineer"],
+        locations=["San Francisco", "London"],
+        ats_domains=["greenhouse.io", "lever.co"]
+    )
+    # "San Francisco" is automatically routed to BuiltIn (Apify).
+    # "London" is automatically routed to Serper (Google ATS).
     """
     DEFAULT_KEYWORDS = ["GTM engineer"]
     DEFAULT_LOCATIONS = ["Berlin", "London", "New York", "San Francisco", "Boston", "US remote"]
@@ -118,12 +129,26 @@ async def scrape_jobs(
 
     logging.info(f"Scraping jobs for keywords={keywords}, locations={locations}, domain={job_domain}")
     
-    backend = os.environ.get("SCRAPER_BACKEND", "apify").lower()
+    s_map = source_map or DEFAULT_SOURCE_MAP
+    builtin_locs = s_map.get("builtin", [])
     
-    if backend == "serper":
-        df = await scrape_serper(keywords, locations, max_results_per_query, job_domain=job_domain, ats_domains=ats_domains)
+    us_locations = [l for l in locations if any(l.lower() in x.lower() for x in builtin_locs)]
+    eu_locations = [l for l in locations if l not in us_locations]
+
+    dfs = []
+    if us_locations:
+        df_us = await scrape_builtin(keywords, us_locations, max_results_per_query, job_domain=job_domain, source_map=source_map)
+        if not df_us.empty:
+            dfs.append(df_us)
+    if eu_locations:
+        df_eu = await scrape_serper(keywords, eu_locations, max_results_per_query, job_domain=job_domain, ats_domains=ats_domains)
+        if not df_eu.empty:
+            dfs.append(df_eu)
+            
+    if dfs:
+        df = pd.concat(dfs, ignore_index=True)
     else:
-        df = await scrape_builtin(keywords, locations, max_results_per_query, job_domain=job_domain, source_map=source_map)
+        df = pd.DataFrame()
         
     if not df.empty:
         df = normalise_columns(df)
