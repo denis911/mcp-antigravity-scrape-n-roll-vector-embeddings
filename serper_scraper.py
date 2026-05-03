@@ -9,10 +9,30 @@ SERPER_URL = "https://google.serper.dev/search"
 
 # Common ATS and job boards to restrict the search and get cleaner data
 ATS_DOMAINS = [
+    # --- Applicant Tracking Systems (ATS) ---
     "boards.greenhouse.io",
     "jobs.lever.co",
     "apply.workable.com",
     "jobs.ashbyhq.com",
+    
+    # --- Job Boards & Startup Platforms ---
+    # Wellfound (formerly AngelList): Lists thousands of tech and startup jobs across Europe, including sales roles at funded companies.
+    "wellfound.com",
+    
+    # Y Combinator Jobs: Focuses on sales positions at YC-funded startups in Europe, with direct founder connections.
+    "ycombinator.com/jobs",
+    
+    # The Hub: Specializes in Nordic startup jobs, including sales, across Europe and remote options.
+    "thehub.io",
+    
+    # TopStartups.io: Aggregates startup sales and other roles in Europe, updated daily.
+    "topstartups.io",
+    
+    # Welcome to the Jungle: Europe's leading board for modern jobs, covering France, Germany, Spain, and more, with sales listings; noted as scrapable.
+    "welcometothejungle.com",
+    
+    # EURES: Official EU portal with millions of jobs across Europe, filterable by sales/startups; has public scraping actors confirming accessibility
+    "eures.europa.eu",
 ]
 
 def build_serper_queries(keywords: list[str], locations: list[str]) -> list[str]:
