@@ -3,7 +3,7 @@ linkedin_scraper.py — LinkedIn Job Scraper via Apify
 =====================================================
 Scrapes LinkedIn jobs for EU/global locations using Apify actors.
 
-Primary actor:  shahidirfan/linkedin-job-scraper  (pay per use, lightweight)
+Primary actor:  shahidirfan/LinkedIn-Job-Scraper  (pay per use, lightweight)
 Fallback actor: scrapier/linkedin-search-jobs-scraper
 
 Key differences from builtin_scraper.py:
@@ -34,7 +34,7 @@ from extractor import extract_structured_data_async, detect_domain, ensure_canon
 
 APIFY_ACTORS = {
     "linkedin": {
-        "primary": "shahidirfan/linkedin-job-scraper",
+        "primary": "shahidirfan/LinkedIn-Job-Scraper",
         "fallback": "scrapier/linkedin-search-jobs-scraper",
     },
 }
@@ -54,18 +54,15 @@ SENIORITY_MAP = {
 
 # ── Actor Input Builders ──────────────────────────────────────────────────────
 
+# Fix (matches OpenAPI schema exactly):
 def _build_primary_input(kw: str, loc: str, max_items: int) -> dict:
-    """Input schema for shahidirfan/linkedin-job-scraper."""
     return {
-        "keyword": kw,
+        "query": kw,          # ← correct field name
         "location": loc,
         "maxJobs": max_items,
-        "timeRange": "past_month",
-        # Uncomment to use residential proxies (more credits, more reliable):
-        # "proxyConfig": {
-        #     "useApifyProxy": True,
-        #     "apifyProxyGroups": ["RESIDENTIAL"]
-        # }
+        "timeRange": "30d",   # matches enum: "anytime"|"24h"|"7d"|"30d"
+        "collectOnly": False,
+        "proxyConfiguration": {"useApifyProxy": True},
     }
 
 def _build_fallback_input(kw: str, loc: str, max_items: int) -> dict:
