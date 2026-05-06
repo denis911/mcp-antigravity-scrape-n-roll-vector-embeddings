@@ -3,7 +3,7 @@ linkedin_scraper.py — LinkedIn Job Scraper via Apify
 =====================================================
 Scrapes LinkedIn jobs for EU/global locations using Apify actors.
 
-Primary actor:  shahidirfan/LinkedIn-Job-Scraper  (pay per use, lightweight)
+Primary actor:  shahidirfan~LinkedIn-Job-Scraper  (pay per use, lightweight)
 Fallback actor: scrapier/linkedin-search-jobs-scraper
 
 Key differences from builtin_scraper.py:
@@ -34,7 +34,7 @@ from extractor import extract_structured_data_async, detect_domain, ensure_canon
 
 APIFY_ACTORS = {
     "linkedin": {
-        "primary": "shahidirfan/LinkedIn-Job-Scraper",
+        "primary": "shahidirfan~LinkedIn-Job-Scraper",
         "fallback": "scrapier/linkedin-search-jobs-scraper",
     },
 }
