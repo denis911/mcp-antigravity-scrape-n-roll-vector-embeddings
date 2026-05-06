@@ -26,10 +26,11 @@ APIFY_ACTORS = {
         "primary": "shahidirfan/builtin-jobs-scraper",
         "fallback": "IhQuCmT40q1tetuv3",
     },
-    "linkedin": {
-        "primary": "nikhuge/advanced-linkedin-jobs-scraper-with-ai",  
-        "fallback": "scrapier/linkedin-search-jobs-scraper",
-    },
+    # LinkedIn is now handled by scrapers/linkedin_scraper.py
+    # "linkedin": {
+    #     "primary": "nikhuge/advanced-linkedin-jobs-scraper-with-ai",  
+    #     "fallback": "scrapier/linkedin-search-jobs-scraper",
+    # },
 }
 
 def _scrape_single_url(client: ApifyClient, url: str, actors: dict, max_items: int) -> list[dict]:

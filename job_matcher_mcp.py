@@ -18,6 +18,7 @@ from job_scorer import get_job_text, profile_to_text, embed_texts
 from scrapers.builtin_scraper import scrape_builtin, DEFAULT_SOURCE_MAP
 from scrapers.serper_scraper import scrape_serper
 from scrapers.japan_scraper import scrape_japan, DEFAULT_JAPAN_LOCATIONS
+from scrapers.linkedin_scraper import scrape_linkedin
 
 # ── Configuration & Initialization ──────────────────────────────────────────
 
@@ -86,8 +87,11 @@ async def scrape_jobs(
 ) -> dict:
     """
     Scrape job postings matching keywords × locations.
-    Automatically routes US locations to BuiltIn (via Apify) and EU/Other locations to Google Serper (ATS search) in a single run.
-    Results from both scrapers are merged into a single CSV.
+    Automatically routes locations to their most optimal scraper in a single run:
+    - US locations -> BuiltIn (Apify)
+    - EU/Global locations -> LinkedIn (Apify) or Google Serper (ATS footprints)
+    - Japanese locations -> Japanese job boards (Serper)
+    Results from all active scrapers are seamlessly merged into a single CSV.
 
     Parameters:
     - keywords: List of job titles or keywords (e.g., ["Data Scientist", "ML Engineer"]).
@@ -97,7 +101,7 @@ async def scrape_jobs(
       Locations mapped to 'builtin' will use the Apify builtin scraper. All other locations will default to Serper.
     - ats_domains: (Optional) A list of domain footprints to restrict Google ATS search (used for Serper routing). 
       Useful for EU startups. Example: ["wellfound.com", "ycombinator.com/jobs", "thehub.io", "topstartups.io"]
-    - locations: Special values that trigger Japanese board routing (via japan_scraper.py):
+    - locations: EU city names (London, Berlin, Amsterdam, Paris, Prague, Vienna, Zurich, Munich, Barcelona, Stockholm, Copenhagen, Warsaw, Remote Europe, EU remote) automatically route to LinkedIn via Apify. IMPORTANT: LinkedIn scraping consumes more Apify credits than BuiltIn. Keep max_results_per_query at 10-20 for free tier ($5/month). Special values that trigger Japanese board routing (via japan_scraper.py):
       "Japan", "Tokyo", "Japanese companies", "Japan remote".
       These locations route to daijob.com, gaijinpot.com, careercross.com, jp.japanese-jobs.com instead of BuiltIn or Serper. Location string is NOT appended to queries for these boards.
 
@@ -108,7 +112,7 @@ async def scrape_jobs(
         ats_domains=["greenhouse.io", "lever.co"]
     )
     # "San Francisco" is automatically routed to BuiltIn (Apify).
-    # "London" is automatically routed to Serper (Google ATS).
+    # "London" is automatically routed to LinkedIn (Apify).
     # "Japan" is automatically routed to Japan Scraper (Japanese Job Boards).
     """
     DEFAULT_KEYWORDS = ["GTM engineer"]
@@ -136,16 +140,22 @@ async def scrape_jobs(
     
     s_map = source_map or DEFAULT_SOURCE_MAP
     builtin_locs = s_map.get("builtin", [])
+    linkedin_locs = s_map.get("linkedin", [])
     
     us_locations = [l for l in locations if any(l.lower() in x.lower() for x in builtin_locs)]
     jp_locations = [l for l in locations if any(l.lower() in j.lower() for j in DEFAULT_JAPAN_LOCATIONS)]
-    eu_locations = [l for l in locations if l not in us_locations and l not in jp_locations]
+    li_locations = [l for l in locations if any(l.lower() in x.lower() for x in linkedin_locs) and l not in jp_locations]
+    eu_locations = [l for l in locations if l not in us_locations and l not in jp_locations and l not in li_locations]
 
     dfs = []
     if us_locations:
         df_us = await scrape_builtin(keywords, us_locations, max_results_per_query, job_domain=job_domain, source_map=source_map)
         if not df_us.empty:
             dfs.append(df_us)
+    if li_locations:
+        df_li = await scrape_linkedin(keywords, li_locations, max_results_per_query, job_domain=job_domain)
+        if not df_li.empty:
+            dfs.append(df_li)
     if eu_locations:
         df_eu = await scrape_serper(keywords, eu_locations, max_results_per_query, job_domain=job_domain, ats_domains=ats_domains)
         if not df_eu.empty:

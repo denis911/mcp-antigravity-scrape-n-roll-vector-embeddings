@@ -5,9 +5,9 @@ STDIO-based MCP server to collect, extract, and semantically rank job postings d
 ## What it does
 Builds a local MCP server (`job_matcher_mcp.py`) that orchestrates a smart pipeline:
 1. **Scrape & Extract** — fetches jobs by keyword + location and uses an LLM to extract structured data.
-   - **Modular Architecture**: Uses dedicated scraper modules (`builtin_scraper.py` for BuiltIn/Apify, `serper_scraper.py` for Google ATS footprints, and `japan_scraper.py` for Japanese job boards). Extraction logic is centralized in `extractor.py`.
+   - **Modular Architecture**: Uses dedicated scraper modules (`builtin_scraper.py` for BuiltIn/Apify, `serper_scraper.py` for Google ATS footprints, `japan_scraper.py` for Japanese job boards, and `linkedin_scraper.py` for LinkedIn via Apify). Extraction logic is centralized in `extractor.py`.
    - **Dynamic Domains**: Auto-detects and optimizes extraction prompts for `gtm`, `sales`, `biotech`, or `data` roles.
-   - **Hybrid Routing**: Automatically routes US locations to BuiltIn (via Apify), EU/Global locations to Google Serper (ATS footprints), and Japanese locations (e.g. "Japan", "Tokyo") to Japanese-specific job boards within the same run, merging results seamlessly.
+   - **Hybrid Routing**: Automatically routes US locations to BuiltIn (via Apify), EU/Global locations to LinkedIn (via Apify) or Google Serper (ATS footprints), and Japanese locations (e.g. "Japan", "Tokyo") to Japanese-specific job boards within the same run, merging results seamlessly.
    - **Concurrent Processing**: Asynchronous HTML fetching and LLM extraction to drastically speed up parallel scrapes.
 2. **Embed** — computes and caches local HuggingFace embeddings for the descriptions (runs locally, completely free).
 3. **Filter & Score** — applies active pre-filters (salary floors, seniority exclusion, relevancy) before ranking by cosine similarity against your profile.
