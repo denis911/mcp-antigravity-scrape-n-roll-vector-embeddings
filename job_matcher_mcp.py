@@ -17,6 +17,7 @@ from openai import AsyncOpenAI
 from job_scorer import get_job_text, profile_to_text, embed_texts
 from builtin_scraper import scrape_builtin, DEFAULT_SOURCE_MAP
 from serper_scraper import scrape_serper
+from japan_scraper import scrape_japan, DEFAULT_JAPAN_LOCATIONS
 
 # ── Configuration & Initialization ──────────────────────────────────────────
 
@@ -96,15 +97,19 @@ async def scrape_jobs(
       Locations mapped to 'builtin' will use the Apify builtin scraper. All other locations will default to Serper.
     - ats_domains: (Optional) A list of domain footprints to restrict Google ATS search (used for Serper routing). 
       Useful for EU startups. Example: ["wellfound.com", "ycombinator.com/jobs", "thehub.io", "topstartups.io"]
+    - locations: Special values that trigger Japanese board routing (via japan_scraper.py):
+      "Japan", "Tokyo", "Japanese companies", "Japan remote".
+      These locations route to daijob.com, gaijinpot.com, careercross.com, jp.japanese-jobs.com instead of BuiltIn or Serper. Location string is NOT appended to queries for these boards.
 
     Example Usage:
     scrape_jobs(
         keywords=["AI Engineer"],
-        locations=["San Francisco", "London"],
+        locations=["San Francisco", "London", "Japan"],
         ats_domains=["greenhouse.io", "lever.co"]
     )
     # "San Francisco" is automatically routed to BuiltIn (Apify).
     # "London" is automatically routed to Serper (Google ATS).
+    # "Japan" is automatically routed to Japan Scraper (Japanese Job Boards).
     """
     DEFAULT_KEYWORDS = ["GTM engineer"]
     DEFAULT_LOCATIONS = ["Berlin", "London", "New York", "San Francisco", "Boston", "US remote"]
@@ -133,7 +138,8 @@ async def scrape_jobs(
     builtin_locs = s_map.get("builtin", [])
     
     us_locations = [l for l in locations if any(l.lower() in x.lower() for x in builtin_locs)]
-    eu_locations = [l for l in locations if l not in us_locations]
+    jp_locations = [l for l in locations if any(l.lower() in j.lower() for j in DEFAULT_JAPAN_LOCATIONS)]
+    eu_locations = [l for l in locations if l not in us_locations and l not in jp_locations]
 
     dfs = []
     if us_locations:
@@ -144,6 +150,10 @@ async def scrape_jobs(
         df_eu = await scrape_serper(keywords, eu_locations, max_results_per_query, job_domain=job_domain, ats_domains=ats_domains)
         if not df_eu.empty:
             dfs.append(df_eu)
+    if jp_locations:
+        df_jp = await scrape_japan(keywords, jp_locations, max_results_per_query, job_domain=job_domain)
+        if not df_jp.empty:
+            dfs.append(df_jp)
             
     if dfs:
         df = pd.concat(dfs, ignore_index=True)
