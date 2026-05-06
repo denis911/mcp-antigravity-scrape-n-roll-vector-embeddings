@@ -15,9 +15,9 @@ from sentence_transformers import SentenceTransformer
 from openai import AsyncOpenAI
 
 from job_scorer import get_job_text, profile_to_text, embed_texts
-from builtin_scraper import scrape_builtin, DEFAULT_SOURCE_MAP
-from serper_scraper import scrape_serper
-from japan_scraper import scrape_japan, DEFAULT_JAPAN_LOCATIONS
+from scrapers.builtin_scraper import scrape_builtin, DEFAULT_SOURCE_MAP
+from scrapers.serper_scraper import scrape_serper
+from scrapers.japan_scraper import scrape_japan, DEFAULT_JAPAN_LOCATIONS
 
 # ── Configuration & Initialization ──────────────────────────────────────────
 

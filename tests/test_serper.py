@@ -1,7 +1,7 @@
 import pytest
 import os
 from unittest.mock import patch
-from serper_scraper import build_serper_queries, search_jobs_serper
+from scrapers.serper_scraper import build_serper_queries, search_jobs_serper
 
 def test_build_serper_queries():
     keywords = ["Data Scientist"]
@@ -28,7 +28,7 @@ async def test_search_jobs_serper_dedup():
     ]
 
     # Mock the sync function
-    with patch("serper_scraper._serper_search_sync", side_effect=mock_responses):
+    with patch("scrapers.serper_scraper._serper_search_sync", side_effect=mock_responses):
         results = await search_jobs_serper(["query1", "query2"])
         
         assert len(results) == 2 # Deduped by link

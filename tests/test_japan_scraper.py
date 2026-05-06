@@ -1,4 +1,4 @@
-from japan_scraper import build_japan_queries, DEFAULT_JAPAN_BOARDS
+from scrapers.japan_scraper import build_japan_queries, DEFAULT_JAPAN_BOARDS
 
 def test_no_location_in_queries():
     """Japan queries must NOT contain location strings."""
