@@ -11,7 +11,8 @@ DEFAULT_SOURCE_MAP = {
     # BuiltIn — US cities
     "builtin": [
         "New York", "San Francisco", "Boston", "Chicago", "Austin",
-        "Seattle", "Denver", "Los Angeles", "Remote", "US remote", "USA"
+        "Seattle", "Denver", "Los Angeles", "Remote", "US remote", "USA",
+        "Czech Republic", "CZE", "Prague CZE"
     ],
     # LinkedIn — global, requires different Apify actor
     "linkedin": [
@@ -124,21 +125,41 @@ def build_urls(keywords: list[str], locations: list[str], source_map: dict | Non
     """Returns {source_name: [url1, url2, ...]} grouped by scraping source."""
     source_map = source_map or DEFAULT_SOURCE_MAP
     urls_by_source = {"builtin": [], "linkedin": []}
+    # DK - added in build_urls(), before the standard URL generation:
+    COUNTRY_CODES = {
+        "czech republic": "CZE",
+        "cze": "CZE", 
+        "germany": "DEU",
+        "deu": "DEU",
+        "netherlands": "NLD",
+        "poland": "POL",
+        "austria": "AUT",
+    }
 
     for kw in keywords:
         for loc in locations:
             kw_url = kw.replace(" ", "+")
             loc_url = loc.replace(" ", "+")
+            loc_lower = loc.lower()
 
-            # Determine source by location
-            if any(loc.lower() in l.lower() for l in source_map.get("linkedin", [])):
+            if any(loc_lower in l.lower() for l in source_map.get("linkedin", [])):
+                # LinkedIn routing — unchanged
                 url = f"https://www.linkedin.com/jobs/search/?keywords={kw_url}&location={loc_url}"
                 urls_by_source["linkedin"].append(url)
+
+            elif loc_lower in COUNTRY_CODES:
+                # Country-code routing — uses BuiltIn country browse URL
+                code = COUNTRY_CODES[loc_lower]
+                url = f"https://builtin.com/jobs?country={code}&allLocations=true&search={kw_url}"
+                urls_by_source["builtin"].append(url)
+
             else:
+                # Standard city/remote routing — unchanged
                 url = f"https://builtin.com/jobs?search={kw_url}&location={loc_url}"
                 urls_by_source["builtin"].append(url)
 
     return urls_by_source
+
 
 async def scrape_builtin(
     keywords: list[str],
