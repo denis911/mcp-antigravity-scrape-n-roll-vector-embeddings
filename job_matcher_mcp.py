@@ -88,22 +88,24 @@ async def scrape_jobs(
     """
     Scrape job postings matching keywords × locations.
     Automatically routes locations to their most optimal scraper in a single run:
-    - US locations -> BuiltIn (Apify)
-    - EU/Global locations -> LinkedIn (Apify) or Google Serper (ATS footprints)
-    - Japanese locations -> Japanese job boards (Serper)
-    Results from all active scrapers are seamlessly merged into a single CSV.
+    - US locations (New York, SF, Boston, etc.) -> BuiltIn (Apify)
+    - EU/Global locations (London, Berlin, etc.) -> LinkedIn (Apify)
+    - Japanese locations (Japan, Tokyo, etc.) -> Japanese job boards (Serper)
+    - All other locations -> Google Serper (ATS footprints)
+
+    Results from all active scrapers are seamlessly merged, normalized, and saved to a single CSV.
 
     Parameters:
     - keywords: List of job titles or keywords (e.g., ["Data Scientist", "ML Engineer"]).
-    - locations: List of locations to search in (e.g., ["Berlin", "London", "New York"]).
-    - source_map: (Optional) A dictionary overriding the routing of locations to scrapers. 
-      Format: {"builtin": ["New York", "Boston"], "linkedin": ["Berlin", "London"]}
-      Locations mapped to 'builtin' will use the Apify builtin scraper. All other locations will default to Serper.
-    - ats_domains: (Optional) A list of domain footprints to restrict Google ATS search (used for Serper routing). 
-      Useful for EU startups. Example: ["wellfound.com", "ycombinator.com/jobs", "thehub.io", "topstartups.io"]
-    - locations: EU city names (London, Berlin, Amsterdam, Paris, Prague, Vienna, Zurich, Munich, Barcelona, Stockholm, Copenhagen, Warsaw, Remote Europe, EU remote) automatically route to LinkedIn via Apify. IMPORTANT: LinkedIn scraping consumes more Apify credits than BuiltIn. Keep max_results_per_query at 10-20 for free tier ($5/month). Special values that trigger Japanese board routing (via japan_scraper.py):
-      "Japan", "Tokyo", "Japanese companies", "Japan remote".
-      These locations route to daijob.com, gaijinpot.com, careercross.com, jp.japanese-jobs.com instead of BuiltIn or Serper. Location string is NOT appended to queries for these boards.
+    - locations: List of locations (e.g., ["Berlin", "London", "New York", "Japan"]).
+    - source_map: (Optional) Override routing for specific locations. 
+      Format: {"builtin": ["Austin"], "linkedin": ["Dublin"], "serper": ["Paris"]}
+    - ats_domains: (Optional) List of domain footprints for Serper search. 
+      Example: ["boards.greenhouse.io", "wellfound.com", "thehub.io"]
+    - job_domain: (Optional) Extraction focus: "gtm", "sales", "biotech", "data", "any".
+      Auto-detected from keywords if not provided.
+    - max_results_per_query: Max items per keyword×location pair (default: 100).
+    - max_total_queries: Safety cap for total parallel requests (default from .env).
 
     Example Usage:
     scrape_jobs(
@@ -111,9 +113,6 @@ async def scrape_jobs(
         locations=["San Francisco", "London", "Japan"],
         ats_domains=["greenhouse.io", "lever.co"]
     )
-    # "San Francisco" is automatically routed to BuiltIn (Apify).
-    # "London" is automatically routed to LinkedIn (Apify).
-    # "Japan" is automatically routed to Japan Scraper (Japanese Job Boards).
     """
     DEFAULT_KEYWORDS = ["GTM engineer"]
     DEFAULT_LOCATIONS = ["Berlin", "London", "New York", "San Francisco", "Boston", "US remote"]
@@ -191,7 +190,16 @@ async def score_jobs(
     force_reembed: bool = False,
 ) -> dict:
     """
-    Compute and cache job embeddings.
+    Compute and cache job embeddings for a given CSV file.
+    Uses local HuggingFace sentence-transformers (free, no API key).
+    
+    Incremental updates: Only embeds rows that don't have an embedding or 
+    were embedded with a different model. Use `force_reembed=True` to refresh all.
+    
+    Parameters:
+    - csv_path: Path to the CSV file (from scrape_jobs or list_saved_csvs).
+    - embed_model: (Optional) Model name (default: "all-MiniLM-L6-v2").
+    - force_reembed: If True, ignores cache and re-computes all embeddings.
     """
     df = pd.read_csv(csv_path)
     df = normalise_columns(df)
@@ -281,7 +289,21 @@ async def get_top_jobs(
     relevant_only: bool = True,
 ) -> dict:
     """
-    Score, rank, explain, save, return top matches.
+    Score, rank, and explain top job matches against the candidate profile.
+    
+    Applies pre-filters (salary, seniority, relevancy) before computing cosine 
+    similarity using local embeddings. Generates AI-powered fit explanations.
+
+    Parameters:
+    - csv_path: Path to the CSV file containing job postings.
+    - profile_path: (Optional) Path to candidate profile JSON (e.g., "test_profile.json").
+    - top_n: (Optional) Number of top matches to return (default: 10).
+    - min_score: Minimum similarity score threshold (0.0 to 1.0).
+    - explain: If True, generates 2-3 sentence fit explanations via LLM.
+    - relevant_only: If True, filters out jobs marked as irrelevant by the extractor.
+    - min_salary: Filter out jobs with base salary below this value.
+    - exclude_seniority: List of seniority levels to exclude (e.g., ["Intern", "Junior"]).
+    - employment_types: List of allowed employment types (e.g., ["Full-time"]).
     """
     df = pd.read_csv(csv_path)
     df = normalise_columns(df)

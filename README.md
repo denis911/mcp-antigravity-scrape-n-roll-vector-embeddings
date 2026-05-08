@@ -37,7 +37,7 @@ echo $env:SERPER_API_KEY
 ```
 
 Available `.env` settings:
-- `SCRAPER_BACKEND`: *(Deprecated)* Location routing is now handled automatically via a hybrid approach combining BuiltIn, Serper, and Japanese job boards.
+- `SCRAPER_BACKEND`: *(Deprecated)* Location routing is now handled automatically via a hybrid approach combining BuiltIn, LinkedIn, Serper, and Japanese job boards.
 - `DEFAULT_JOB_DOMAIN`: `any`, `gtm`, `sales`, `biotech`, `data`.
 - `DEFAULT_MIN_SALARY`: Filter out jobs below this base salary (e.g. `80000`).
 - `DEFAULT_EXCLUDE_SENIORITY`: Comma-separated list (e.g. `Intern,Junior`).
