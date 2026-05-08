@@ -46,33 +46,34 @@ Available `.env` settings:
 
 - **`scrape_jobs`**: Parallel scraping with domain auto-detection and multi-source routing.
 - **`compare_searches`**: Run A/B tests across multiple keyword strategies to find the highest-quality yield.
+- **`snipe_url`**: Fetch, parse, embed, and score any single job URL instantly (~$0.002).
 - **`score_jobs`**: Computes local HuggingFace embeddings for a CSV.
 - **`get_top_jobs`**: Ranks jobs against your `test_profile.json` applying configurable pre-filters.
 - **`list_saved_csvs`**: Utility to view all cached CSV files in `data/` and `output/`.
 
 ## Keyword Strategy
 
-We use four primary categories for keyword expansion to maximize search yield for technical/commercial hybrid roles.
+When scraping jobs, use these expanded taxonomy categories to maximize search yield for technical/commercial hybrid roles:
 
-### 1. Pre-sales / Solutions Engineering (High Priority)
+### Category A — Pre-sales / Solutions Engineering (HIGH PRIORITY)
 Focuses on roles that bridge technical depth with commercial outcomes.
-- **Keywords**: `pre-sales engineer`, `solutions engineer`, `technical sales engineer`, `solutions consultant`.
-- **Rationale**: Highly qualified for candidates with dual technical/commercial backgrounds.
+- **Keywords**: `pre-sales engineer`, `solutions engineer`, `solutions consultant`, `sales engineer`, `forward deployed engineer`, `applied AI engineer`, `technical sales engineer`, `AI solutions consultant`.
+- **Rationale**: Highly qualified for candidates with dual technical/commercial backgrounds. duvo.ai (4.80/5.0) came from this category.
 
-### 2. Technology-based (Stack Focused)
-Searching by specific technologies rather than job titles.
-- **Keywords**: `AI automation sales`, `LLM solutions engineer`, `GCP partner sales`, `agentic AI`.
+### Category B — Technology-based Search
+Searching by stack/domain rather than job function.
+- **Keywords**: `AI automation sales`, `LLM solutions engineer`, `agentic AI sales`, `GCP partner sales`, `PostgreSQL solutions`, `data infrastructure sales`, `AI consulting presales`.
 - **Rationale**: Catches high-relevancy roles at niche startups that may use non-standard titles.
 
-### 3. Customer Success / TAM (Medium Priority)
+### Category C — Customer Success / TAM (MEDIUM PRIORITY)
 Post-sales technical relationship management.
-- **Keywords**: `technical account manager AI`, `customer success manager AI SaaS`.
+- **Keywords**: `technical account manager AI`, `customer success manager AI SaaS`, `AI platform customer success`, `enterprise customer success data`, `technical customer success`.
 - **Rationale**: Lower quota pressure, higher relationship depth, but still commercially relevant.
 
-### 4. Forward Deployed / Applied Engineering (Stretch)
+### Category D — FDE / Applied Engineering (STRETCH)
 Coding-heavy implementation roles at AI startups.
-- **Keywords**: `forward deployed engineer AI`, `applied AI engineer`, `solutions architect AI`.
-- **Rationale**: Feasible for candidates with prototyping track records and cloud expertise.
+- **Keywords**: `forward deployed engineer AI`, `applied AI engineer`, `implementation engineer AI SaaS`, `solutions architect AI`, `AI implementation consultant`.
+- **Rationale**: Feasible for candidates with prototyping track records and cloud expertise. Line between PSE and FDE is often thin at early startups.
 
 ## Usage
 

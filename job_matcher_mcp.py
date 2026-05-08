@@ -74,46 +74,6 @@ def normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 # ── MCP Tools ───────────────────────────────────────────────────────────────
 
-@mcp.tool()
-async def scrape_jobs(
-    keywords: list[str] | None = None,
-    locations: list[str] | None = None,
-    max_results_per_query: int = 100,
-    job_domain: str | None = None,
-    max_total_queries: int | None = None,
-    output_path: str | None = None,
-    source_map: dict | None = None,
-    ats_domains: list[str] | None = None,
-) -> dict:
-    """
-    Scrape job postings matching keywords × locations.
-    Automatically routes locations to their most optimal scraper in a single run:
-    - US locations (New York, SF, Boston, etc.) -> BuiltIn (Apify)
-    - EU/Global locations (London, Berlin, etc.) -> LinkedIn (Apify)
-    - Japanese locations (Japan, Tokyo, etc.) -> Japanese job boards (Serper)
-    - All other locations -> Google Serper (ATS footprints)
-
-    Results from all active scrapers are seamlessly merged, normalized, and saved to a single CSV.
-
-    Parameters:
-    - keywords: List of job titles or keywords (e.g., ["Data Scientist", "ML Engineer"]).
-    - locations: List of locations (e.g., ["Berlin", "London", "New York", "Japan"]).
-    - source_map: (Optional) Override routing for specific locations. 
-      Format: {"builtin": ["Austin"], "linkedin": ["Dublin"], "serper": ["Paris"]}
-    - ats_domains: (Optional) List of domain footprints for Serper search. 
-      Example: ["boards.greenhouse.io", "wellfound.com", "thehub.io"]
-    - job_domain: (Optional) Extraction focus: "gtm", "sales", "biotech", "data", "any".
-      Auto-detected from keywords if not provided.
-    - max_results_per_query: Max items per keyword×location pair (default: 100).
-    - max_total_queries: Safety cap for total parallel requests (default from .env).
-
-    Example Usage:
-    scrape_jobs(
-        keywords=["AI Engineer"],
-        locations=["San Francisco", "London", "Japan"],
-        ats_domains=["greenhouse.io", "lever.co"]
-    )
-    """
 async def _run_scrape(
     keywords: list[str],
     locations: list[str],
@@ -635,6 +595,144 @@ async def get_top_jobs(
             "median": float(np.median(scores)) if len(scores) else 0.0,
         },
         "top_jobs": top_jobs_json
+    }
+
+
+@mcp.tool()
+async def snipe_url(
+    url: str,
+    profile_path: str | None = None,
+    explain: bool = True,
+) -> dict:
+    """Fetch, parse, embed, and score a single job posting URL."""
+    profile_path = profile_path or os.getenv("DEFAULT_PROFILE_JSON")
+    if not profile_path or not Path(profile_path).exists():
+        raise FileNotFoundError(f"Profile not found at {profile_path}")
+
+    with open(profile_path, encoding="utf-8") as f:
+        profile = json.load(f)
+
+    # ── Step 1: Fetch URL content ─────────────────────────────────────────
+    # Try direct HTTP first (fast, free). Apify fallback for blocked sites.
+    description_text = ""
+    title = ""
+
+    try:
+        import aiohttp
+        from bs4 import BeautifulSoup
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                url,
+                timeout=aiohttp.ClientTimeout(total=15),
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+            ) as resp:
+                if resp.status == 200:
+                    html = await resp.text()
+                    soup = BeautifulSoup(html, "html.parser")
+                    title_tag = soup.find("h1") or soup.find("title")
+                    title = title_tag.get_text(strip=True) if title_tag else ""
+                    for tag in soup(["script", "style", "nav", "header", "footer", "noscript"]):
+                        tag.extract()
+                    description_text = soup.get_text(separator=" ", strip=True)
+                    logging.info(f"snipe_url: fetched {len(description_text)} chars via HTTP")
+    except Exception as e:
+        logging.warning(f"snipe_url: direct HTTP failed ({e}), trying Apify fallback")
+
+    # Apify fallback for LinkedIn and other bot-protected sites
+    if len(description_text) < 200:
+        try:
+            token = os.environ.get("APIFY_API_TOKEN")
+            if token:
+                loop = asyncio.get_event_loop()
+                def _apify_fetch():
+                    from apify_client import ApifyClient
+                    client = ApifyClient(token)
+                    # cheerio-scraper: cheap, fast, handles most job boards
+                    run = client.actor("apify/cheerio-scraper").call(run_input={
+                        "startUrls": [{"url": url}],
+                        "maxCrawlingDepth": 0,
+                        "maxPagesPerCrawl": 1,
+                    })
+                    items = list(client.dataset(run["defaultDatasetId"]).iterate_items())
+                    if items:
+                        item = items[0]
+                        return (
+                            item.get("text", "")
+                            or item.get("pageContent", "")
+                            or item.get("body", "")
+                        )
+                    return ""
+                description_text = await loop.run_in_executor(None, _apify_fetch)
+                logging.info(f"snipe_url: Apify fetched {len(description_text)} chars")
+        except Exception as e:
+            logging.error(f"snipe_url: Apify fallback failed: {e}")
+
+    if len(description_text) < 100:
+        return {
+            "status": "error",
+            "error": (
+                f"Could not fetch sufficient content from {url}. "
+                "Try copy-pasting the JD text directly."
+            )
+        }
+
+    # ── Step 2: LLM extraction ────────────────────────────────────────────
+    raw_item = {
+        "title": title,
+        "company": "",
+        "url": url,
+        "description_text": description_text[:6000],
+        "description": description_text[:6000],
+        "source": "snipe",
+    }
+
+    from extractor import extract_structured_data_async, ensure_canonical_columns
+    structured = await extract_structured_data_async([raw_item], domain="any")
+    if not structured:
+        return {"status": "error", "error": "LLM extraction returned no results"}
+
+    item = structured[0]
+    df_row = ensure_canonical_columns(pd.DataFrame([item])).iloc[0]
+
+    # ── Step 3: Embed ─────────────────────────────────────────────────────
+    text = get_job_text(df_row)
+    model = get_model()
+    vec = model.encode([text], normalize_embeddings=True)[0]
+
+    # ── Step 4: Score against profile ────────────────────────────────────
+    profile_text = profile_to_text(profile)
+    profile_vec = model.encode([profile_text], normalize_embeddings=True)[0]
+    score = float(cosine_similarity([profile_vec], [vec])[0][0])
+
+    # ── Step 5: Fit explanation ───────────────────────────────────────────
+    fit_explanation = ""
+    if explain:
+        try:
+            client_oai = AsyncOpenAI()
+            llm_model = os.getenv("OPENAI_EXPLAIN_MODEL", "gpt-4o-mini")
+            candidate_summary = profile.get("summary", {}).get("elevator_pitch", "")
+            fit_explanation = await _explain_job(
+                client_oai, llm_model, candidate_summary, df_row
+            )
+        except Exception as e:
+            logging.warning(f"snipe_url: explanation failed: {e}")
+
+    return {
+        "status": "ok",
+        "title": str(item.get("title", title)),
+        "company": str(item.get("company", "")),
+        "location": str(item.get("location", "")),
+        "salary": str(item.get("salary", "")),
+        "seniority": str(item.get("seniority", "")),
+        "employment_type": str(item.get("employment_type", "")),
+        "tech_stack": item.get("tech_stack", []),
+        "min_years_exp": item.get("min_years_exp", ""),
+        "is_relevant": item.get("is_relevant", ""),
+        "url": url,
+        "similarity_score": round(score, 4),
+        "fit_explanation": fit_explanation,
+        "description_text": description_text[:1500],
+        "source": "snipe",
     }
 
 
