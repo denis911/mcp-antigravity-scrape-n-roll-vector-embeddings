@@ -34,7 +34,7 @@ from extractor import extract_structured_data_async, detect_domain, ensure_canon
 
 APIFY_ACTORS = {
     "linkedin": {
-        "primary": "shahidirfan/LinkedIn-Job-Scraper",
+        "primary": "shahidirfan~LinkedIn-Job-Scraper",
         "fallback": "scrapier/linkedin-search-jobs-scraper",
     },
 }
