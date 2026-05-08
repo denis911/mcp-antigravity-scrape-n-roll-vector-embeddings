@@ -77,107 +77,137 @@ def normalise_columns(df: pd.DataFrame) -> pd.DataFrame:
 async def _run_scrape(
     keywords: list[str],
     locations: list[str],
-    max_results_per_query: int = 100,
+    max_results_per_query: int = 15,
     job_domain: str | None = None,
     max_total_queries: int | None = None,
     output_path: str | None = None,
-    source_map: dict | None = None,
+    source_map: dict | None = None, # kept for backward compatibility but ignored
     ats_domains: list[str] | None = None,
+    scrapers: list[str] | None = None, # NEW
 ) -> pd.DataFrame:
-    """Internal shared scraping logic."""
-    max_total_queries = max_total_queries or int(os.getenv("MAX_TOTAL_QUERIES", 8))
-    
-    # Safety cap
-    total_requested = len(keywords) * len(locations)
-    if total_requested > max_total_queries:
-        logging.warning(f"Total queries {total_requested} exceeds safety cap {max_total_queries}. Truncating.")
-        flat_queries = [(kw, loc) for kw in keywords for loc in locations][:max_total_queries]
-        keywords = sorted(list(set(q[0] for q in flat_queries)))
-        locations = sorted(list(set(q[1] for q in flat_queries)))
+    """Internal shared scraping logic with parallel multi-scraper routing."""
+    # Determine which scrapers to run
+    if scrapers is None:
+        active_scrapers = ["builtin", "linkedin", "serper"]
+    else:
+        active_scrapers = [s.lower() for s in scrapers]
+
+    # Auto-add Japan scraper if Japan location detected
+    jp_locations = [l for l in locations if any(
+        l.lower() in j.lower() for j in DEFAULT_JAPAN_LOCATIONS
+    )]
+    non_jp_locations = [l for l in locations if l not in jp_locations]
+
+    # Safety cap — divide budget across active scrapers
+    n_scrapers = len(active_scrapers) + (1 if jp_locations else 0)
+    max_total = max_total_queries or int(os.getenv("MAX_TOTAL_QUERIES", 8))
+    per_scraper_queries = max(1, max_total // n_scrapers) if n_scrapers > 0 else 1
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = output_path or f"data/raw_jobs_{timestamp}.csv"
     Path(out_path).parent.mkdir(parents=True, exist_ok=True)
 
-    logging.info(f"Scraping jobs for keywords={keywords}, locations={locations}, domain={job_domain}")
+    logging.info(f"Parallel scrape: keywords={keywords}, locations={locations}, scrapers={active_scrapers}")
     
-    s_map = source_map or DEFAULT_SOURCE_MAP
-    builtin_locs = s_map.get("builtin", [])
-    linkedin_locs = s_map.get("linkedin", [])
+    tasks = []
     
-    us_locations = [l for l in locations if any(l.lower() in x.lower() for x in builtin_locs)]
-    jp_locations = [l for l in locations if any(l.lower() in j.lower() for j in DEFAULT_JAPAN_LOCATIONS)]
-    li_locations = [l for l in locations if any(l.lower() in x.lower() for x in linkedin_locs) and l not in jp_locations]
-    eu_locations = [l for l in locations if l not in us_locations and l not in jp_locations and l not in li_locations]
+    if "builtin" in active_scrapers and non_jp_locations:
+        tasks.append(
+            scrape_builtin(keywords, non_jp_locations, max_results_per_query, job_domain=job_domain)
+        )
+
+    if "linkedin" in active_scrapers and non_jp_locations:
+        tasks.append(
+            scrape_linkedin(keywords, non_jp_locations, max_results_per_query, job_domain=job_domain)
+        )
+
+    if "serper" in active_scrapers and non_jp_locations:
+        tasks.append(
+            scrape_serper(keywords, non_jp_locations, max_results_per_query,
+                         job_domain=job_domain, ats_domains=ats_domains)
+        )
+
+    if jp_locations:
+        # Use "japan" explicitly or just run if JP locations present
+        if scrapers is None or "japan" in active_scrapers:
+            tasks.append(
+                scrape_japan(keywords, jp_locations, max_results_per_query, job_domain=job_domain)
+            )
+
+    if not tasks:
+        logging.warning("No scrapers active for the given locations/parameters.")
+        return pd.DataFrame()
+
+    # Execute all scrapers concurrently
+    results = await asyncio.gather(*tasks, return_exceptions=True)
 
     dfs = []
-    if us_locations:
-        df_us = await scrape_builtin(keywords, us_locations, max_results_per_query, job_domain=job_domain, source_map=source_map)
-        if not df_us.empty:
-            dfs.append(df_us)
-    if li_locations:
-        df_li = await scrape_linkedin(keywords, li_locations, max_results_per_query, job_domain=job_domain)
-        if not df_li.empty:
-            dfs.append(df_li)
-    if eu_locations:
-        df_eu = await scrape_serper(keywords, eu_locations, max_results_per_query, job_domain=job_domain, ats_domains=ats_domains)
-        if not df_eu.empty:
-            dfs.append(df_eu)
-    if jp_locations:
-        df_jp = await scrape_japan(keywords, jp_locations, max_results_per_query, job_domain=job_domain)
-        if not df_jp.empty:
-            dfs.append(df_jp)
-            
-    if dfs:
-        df = pd.concat(dfs, ignore_index=True)
-    else:
-        df = pd.DataFrame()
-        
-    if not df.empty:
-        df = normalise_columns(df)
-        df.to_csv(out_path, index=False)
-        logging.info(f"Scraped {len(df)} jobs → {out_path}")
-        
+    for result in results:
+        if isinstance(result, Exception):
+            logging.error(f"Scraper error: {result}")
+            continue
+        if isinstance(result, pd.DataFrame) and not result.empty:
+            dfs.append(result)
+
+    if not dfs:
+        return pd.DataFrame()
+
+    # Merge and deduplicate by URL
+    df = pd.concat(dfs, ignore_index=True)
+    df = normalise_columns(df)
+    
+    if "url" in df.columns:
+        original_len = len(df)
+        df = df.drop_duplicates(subset=["url"], keep="first")
+        logging.info(f"Deduplicated by URL: {original_len} -> {len(df)} jobs")
+
+    df.to_csv(out_path, index=False)
+    logging.info(f"Merged results saved to {out_path}")
+    
     return df
 
 @mcp.tool()
 async def scrape_jobs(
     keywords: list[str] | None = None,
     locations: list[str] | None = None,
-    max_results_per_query: int = 100,
+    max_results_per_query: int = 15,
     job_domain: str | None = None,
     max_total_queries: int | None = None,
     output_path: str | None = None,
-    source_map: dict | None = None,
     ats_domains: list[str] | None = None,
+    scrapers: list[str] | None = None,     # NEW — ["builtin", "linkedin", "serper", "japan"]
 ) -> dict:
     """
-    Scrape job postings matching keywords × locations.
-    Automatically routes locations to their most optimal scraper in a single run:
-    - US locations (New York, SF, Boston, etc.) -> BuiltIn (Apify)
-    - EU/Global locations (London, Berlin, etc.) -> LinkedIn (Apify)
-    - Japanese locations (Japan, Tokyo, etc.) -> Japanese job boards (Serper)
-    - All other locations -> Google Serper (ATS footprints)
-
-    Results from all active scrapers are seamlessly merged, normalized, and saved to a single CSV.
+    Scrape job postings matching keywords × locations using multiple scrapers in parallel.
+    
+    Default behavior runs BuiltIn, LinkedIn, and Serper scrapers concurrently for 
+    maximum discovery yield. Japan locations are automatically routed to Japan-specific boards.
 
     Parameters:
     - keywords: List of job titles or keywords (e.g., ["Data Scientist", "ML Engineer"]).
     - locations: List of locations (e.g., ["Berlin", "London", "New York", "Japan"]).
-    - source_map: (Optional) Override routing for specific locations. 
-      Format: {"builtin": ["Austin"], "linkedin": ["Dublin"], "serper": ["Paris"]}
+    - scrapers: (Optional) List of scrapers to use. Default: all main scrapers.
+      Options: "builtin", "linkedin", "serper", "japan"
     - ats_domains: (Optional) List of domain footprints for Serper search. 
       Example: ["boards.greenhouse.io", "wellfound.com", "thehub.io"]
     - job_domain: (Optional) Extraction focus: "gtm", "sales", "biotech", "data", "any".
       Auto-detected from keywords if not provided.
-    - max_results_per_query: Max items per keyword×location pair (default: 100).
+    - max_results_per_query: Max items per keyword×location pair (default: 15 for parallel runs).
     - max_total_queries: Safety cap for total parallel requests (default from .env).
 
     Example Usage:
+    # Broad discovery across all sources
     scrape_jobs(
         keywords=["AI Engineer"],
-        locations=["San Francisco", "London", "Japan"],
-        ats_domains=["greenhouse.io", "lever.co"]
+        locations=["San Francisco", "London", "Japan"]
+    )
+    
+    # Specific scraper for deep search
+    scrape_jobs(
+        keywords=["Account Executive"],
+        locations=["Czech Republic"],
+        scrapers=["builtin"],
+        max_results_per_query=50
     )
     """
     DEFAULT_KEYWORDS = ["GTM engineer"]
@@ -193,15 +223,15 @@ async def scrape_jobs(
         job_domain=job_domain,
         max_total_queries=max_total_queries,
         output_path=output_path,
-        source_map=source_map,
-        ats_domains=ats_domains
+        ats_domains=ats_domains,
+        scrapers=scrapers
     )
     
     return {
         "status": "ok",
-        "csv_path": output_path or "data/raw_jobs_*.csv", # approximation if not provided
+        "csv_path": str(output_path) if output_path else "data/raw_jobs_*.csv",
         "jobs_scraped": len(df),
-        "queries_run": len(keywords) * len(locations) # approximation
+        "queries_run": len(keywords) * len(locations)
     }
 
 @mcp.tool()
@@ -263,7 +293,8 @@ async def compare_searches(
             locations=locations,
             max_results_per_query=max_results_per_query,
             job_domain=job_domain,
-            output_path=csv_path
+            output_path=csv_path,
+            scrapers=strategy.get("scrapers")
         )
 
         if df.empty:

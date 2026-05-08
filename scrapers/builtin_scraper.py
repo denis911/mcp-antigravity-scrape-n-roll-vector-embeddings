@@ -123,9 +123,9 @@ async def scrape_apify(urls_by_source: dict[str, list[str]], max_items: int) -> 
 
 def build_urls(keywords: list[str], locations: list[str], source_map: dict | None = None) -> dict[str, list[str]]:
     """Returns {source_name: [url1, url2, ...]} grouped by scraping source."""
-    source_map = source_map or DEFAULT_SOURCE_MAP
-    urls_by_source = {"builtin": [], "linkedin": []}
-    # DK - added in build_urls(), before the standard URL generation:
+    # Note: source_map is kept for signature compatibility but no longer used for routing here.
+    urls_by_source = {"builtin": []}
+    
     COUNTRY_CODES = {
         "czech republic": "CZE",
         "cze": "CZE", 
@@ -142,19 +142,13 @@ def build_urls(keywords: list[str], locations: list[str], source_map: dict | Non
             loc_url = loc.replace(" ", "+")
             loc_lower = loc.lower()
 
-            if any(loc_lower in l.lower() for l in source_map.get("linkedin", [])):
-                # LinkedIn routing — unchanged
-                url = f"https://www.linkedin.com/jobs/search/?keywords={kw_url}&location={loc_url}"
-                urls_by_source["linkedin"].append(url)
-
-            elif loc_lower in COUNTRY_CODES:
+            if loc_lower in COUNTRY_CODES:
                 # Country-code routing — uses BuiltIn country browse URL
                 code = COUNTRY_CODES[loc_lower]
                 url = f"https://builtin.com/jobs?country={code}&allLocations=true&search={kw_url}"
                 urls_by_source["builtin"].append(url)
-
             else:
-                # Standard city/remote routing — unchanged
+                # Standard city/remote routing
                 url = f"https://builtin.com/jobs?search={kw_url}&location={loc_url}"
                 urls_by_source["builtin"].append(url)
 

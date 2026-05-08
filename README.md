@@ -6,7 +6,8 @@ STDIO-based MCP server to collect, extract, and semantically rank job postings d
 Builds a local MCP server (`job_matcher_mcp.py`) that orchestrates a smart pipeline:
 1. **Scrape & Extract** — fetches jobs by keyword + location and uses an LLM to extract structured data.
    - **Modular Architecture**: Uses dedicated scraper modules (`builtin_scraper.py` for BuiltIn/Apify, `serper_scraper.py` for Google ATS footprints, `japan_scraper.py` for Japanese job boards, and `linkedin_scraper.py` for LinkedIn via Apify). Extraction logic is centralized in `extractor.py`.
-   - **Hybrid Routing**: Automatically routes US locations to BuiltIn (via Apify), EU/Global locations to LinkedIn (via Apify) or Google Serper (ATS footprints), and Japanese locations (e.g. "Japan", "Tokyo") to Japanese-specific job boards within the same run.
+   - **Parallel Discovery**: Automatically runs BuiltIn, LinkedIn, and Serper scrapers in parallel for maximum discovery yield. Deduplicates across all sources in a single run.
+   - **Customizable Scrapers**: Use `scrapers=["builtin"]` to restrict search to specific platforms for speed or country-specific depth.
 2. **A/B Test Strategies** — allows comparing different keyword sets side-by-side to find the highest-quality yield via `compare_searches()`.
 3. **Embed** — computes and caches local HuggingFace embeddings for the descriptions (runs locally, completely free).
 4. **Filter & Score** — applies active pre-filters (salary floors, seniority exclusion, relevancy) before ranking by cosine similarity against your profile.
@@ -46,7 +47,7 @@ Available `.env` settings:
 
 ## Tools
 
-- **`scrape_jobs`**: Parallel scraping with domain auto-detection and multi-source routing.
+- **`scrape_jobs`**: Parallel scraping across BuiltIn, LinkedIn, and Serper. Supports `scrapers` list for granular control.
 - **`compare_searches`**: Run A/B tests across multiple keyword strategies to find the highest-quality yield.
 - **`snipe_url`**: Fetch, parse, embed, and score any single job URL instantly (~$0.002).
 - **`score_jobs`**: Computes local HuggingFace embeddings for a CSV.
