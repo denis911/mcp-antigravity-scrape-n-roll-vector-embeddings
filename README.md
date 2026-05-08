@@ -20,6 +20,8 @@ Builds a local MCP server (`job_matcher_mcp.py`) that orchestrates a smart pipel
 
 ## Installation (uv)
 
+(If uv is not installed use choco (choco install uv).)
+
 ```bash
 uv sync --extra test
 ```
