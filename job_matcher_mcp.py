@@ -639,7 +639,7 @@ async def snipe_url(
         logging.warning(f"snipe_url: direct HTTP failed ({e}), trying Apify fallback")
 
     # Apify fallback for LinkedIn and other bot-protected sites
-    if len(description_text) < 200:
+    if len(description_text) < 1000:
         try:
             token = os.environ.get("APIFY_API_TOKEN")
             if token:
