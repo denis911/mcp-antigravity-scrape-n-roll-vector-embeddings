@@ -6,11 +6,10 @@ STDIO-based MCP server to collect, extract, and semantically rank job postings d
 Builds a local MCP server (`job_matcher_mcp.py`) that orchestrates a smart pipeline:
 1. **Scrape & Extract** — fetches jobs by keyword + location and uses an LLM to extract structured data.
    - **Modular Architecture**: Uses dedicated scraper modules (`builtin_scraper.py` for BuiltIn/Apify, `serper_scraper.py` for Google ATS footprints, `japan_scraper.py` for Japanese job boards, and `linkedin_scraper.py` for LinkedIn via Apify). Extraction logic is centralized in `extractor.py`.
-   - **Dynamic Domains**: Auto-detects and optimizes extraction prompts for `gtm`, `sales`, `biotech`, or `data` roles.
-   - **Hybrid Routing**: Automatically routes US locations to BuiltIn (via Apify), EU/Global locations to LinkedIn (via Apify) or Google Serper (ATS footprints), and Japanese locations (e.g. "Japan", "Tokyo") to Japanese-specific job boards within the same run, merging results seamlessly.
-   - **Concurrent Processing**: Asynchronous HTML fetching and LLM extraction to drastically speed up parallel scrapes.
-2. **Embed** — computes and caches local HuggingFace embeddings for the descriptions (runs locally, completely free).
-3. **Filter & Score** — applies active pre-filters (salary floors, seniority exclusion, relevancy) before ranking by cosine similarity against your profile.
+   - **Hybrid Routing**: Automatically routes US locations to BuiltIn (via Apify), EU/Global locations to LinkedIn (via Apify) or Google Serper (ATS footprints), and Japanese locations (e.g. "Japan", "Tokyo") to Japanese-specific job boards within the same run.
+2. **A/B Test Strategies** — allows comparing different keyword sets side-by-side to find the highest-quality yield via `compare_searches()`.
+3. **Embed** — computes and caches local HuggingFace embeddings for the descriptions (runs locally, completely free).
+4. **Filter & Score** — applies active pre-filters (salary floors, seniority exclusion, relevancy) before ranking by cosine similarity against your profile.
 
 ## Requirements
 - Python >= 3.11
@@ -37,28 +36,69 @@ echo $env:SERPER_API_KEY
 ```
 
 Available `.env` settings:
-- `SCRAPER_BACKEND`: *(Deprecated)* Location routing is now handled automatically via a hybrid approach combining BuiltIn, LinkedIn, Serper, and Japanese job boards.
+- `SCRAPER_BACKEND`: *(Deprecated)* Location routing is now handled automatically via a hybrid approach.
 - `DEFAULT_JOB_DOMAIN`: `any`, `gtm`, `sales`, `biotech`, `data`.
 - `DEFAULT_MIN_SALARY`: Filter out jobs below this base salary (e.g. `80000`).
 - `DEFAULT_EXCLUDE_SENIORITY`: Comma-separated list (e.g. `Intern,Junior`).
-- `DEFAULT_EMPLOYMENT_TYPE`: (e.g. `Full-time,Contract`).
 - `MAX_TOTAL_QUERIES`: Safety cap for parallel scraping (default: 8).
 
 ## Tools
 
 - **`scrape_jobs`**: Parallel scraping with domain auto-detection and multi-source routing.
-- **`score_jobs`**: Computes local HuggingFace embeddings for a CSV (clean output without protocol corruption).
-- **`get_top_jobs`**: Ranks jobs against your `test_profile.json` applying configurable pre-filters (salary, seniority, etc.).
-- **`list_saved_csvs`**: Utility to view all cached CSV files in `data/` and `output/`. Backward compatible with older exports.
+- **`compare_searches`**: Run A/B tests across multiple keyword strategies to find the highest-quality yield.
+- **`score_jobs`**: Computes local HuggingFace embeddings for a CSV.
+- **`get_top_jobs`**: Ranks jobs against your `test_profile.json` applying configurable pre-filters.
+- **`list_saved_csvs`**: Utility to view all cached CSV files in `data/` and `output/`.
 
-## MCP Tool Best Practices
+## Keyword Strategy
 
-To ensure LLM agents can effectively use the MCP server, we've implemented the following best practices in our tool descriptions (docstrings):
-- **Clear Formatting**: Using a `Parameters:` section ensures the LLM schema parser correctly reads and maps descriptions.
-- **Explicit Structures**: Providing the exact JSON key/value structure required for complex arguments (e.g., `{"linkedin": ["Berlin", "London"]}` for `source_map`).
-- **Concrete Examples**: Giving concrete strings like `"wellfound.com"` instead of vague descriptions ensures the LLM passes actual URL footprints to the `ats_domains` parameter instead of hallucinating.
+We use four primary categories for keyword expansion to maximize search yield for technical/commercial hybrid roles.
+
+### 1. Pre-sales / Solutions Engineering (High Priority)
+Focuses on roles that bridge technical depth with commercial outcomes.
+- **Keywords**: `pre-sales engineer`, `solutions engineer`, `technical sales engineer`, `solutions consultant`.
+- **Rationale**: Highly qualified for candidates with dual technical/commercial backgrounds.
+
+### 2. Technology-based (Stack Focused)
+Searching by specific technologies rather than job titles.
+- **Keywords**: `AI automation sales`, `LLM solutions engineer`, `GCP partner sales`, `agentic AI`.
+- **Rationale**: Catches high-relevancy roles at niche startups that may use non-standard titles.
+
+### 3. Customer Success / TAM (Medium Priority)
+Post-sales technical relationship management.
+- **Keywords**: `technical account manager AI`, `customer success manager AI SaaS`.
+- **Rationale**: Lower quota pressure, higher relationship depth, but still commercially relevant.
+
+### 4. Forward Deployed / Applied Engineering (Stretch)
+Coding-heavy implementation roles at AI startups.
+- **Keywords**: `forward deployed engineer AI`, `applied AI engineer`, `solutions architect AI`.
+- **Rationale**: Feasible for candidates with prototyping track records and cloud expertise.
 
 ## Usage
+
+### A/B Testing Example
+
+To evaluate which strategy finds better-fitting roles, use `compare_searches()`:
+
+```python
+compare_searches(
+    search_strategies=[
+        {
+            "name": "traditional_sales",
+            "keywords": ["account executive", "founding AE"],
+            "locations": ["Remote", "London"],
+            "job_domain": "sales"
+        },
+        {
+            "name": "presales_se",
+            "keywords": ["pre-sales engineer", "solutions engineer"],
+            "locations": ["Remote", "London"],
+            "job_domain": "sales"
+        }
+    ],
+    max_results_per_query=10
+)
+```
 
 ### Via Claude Desktop / Cursor
 Add to your config:

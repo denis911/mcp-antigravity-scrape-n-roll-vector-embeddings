@@ -114,19 +114,23 @@ async def scrape_jobs(
         ats_domains=["greenhouse.io", "lever.co"]
     )
     """
-    DEFAULT_KEYWORDS = ["GTM engineer"]
-    DEFAULT_LOCATIONS = ["Berlin", "London", "New York", "San Francisco", "Boston", "US remote"]
-    
+async def _run_scrape(
+    keywords: list[str],
+    locations: list[str],
+    max_results_per_query: int = 100,
+    job_domain: str | None = None,
+    max_total_queries: int | None = None,
+    output_path: str | None = None,
+    source_map: dict | None = None,
+    ats_domains: list[str] | None = None,
+) -> pd.DataFrame:
+    """Internal shared scraping logic."""
     max_total_queries = max_total_queries or int(os.getenv("MAX_TOTAL_QUERIES", 8))
     
-    keywords = keywords or DEFAULT_KEYWORDS
-    locations = locations or DEFAULT_LOCATIONS
-
     # Safety cap
     total_requested = len(keywords) * len(locations)
     if total_requested > max_total_queries:
         logging.warning(f"Total queries {total_requested} exceeds safety cap {max_total_queries}. Truncating.")
-        # Simple truncation: take first N combinations
         flat_queries = [(kw, loc) for kw in keywords for loc in locations][:max_total_queries]
         keywords = sorted(list(set(q[0] for q in flat_queries)))
         locations = sorted(list(set(q[1] for q in flat_queries)))
@@ -171,15 +175,220 @@ async def scrape_jobs(
         
     if not df.empty:
         df = normalise_columns(df)
+        df.to_csv(out_path, index=False)
+        logging.info(f"Scraped {len(df)} jobs → {out_path}")
         
-    df.to_csv(out_path, index=False)
-    logging.info(f"Scraped {len(df)} jobs → {out_path}")
+    return df
+
+@mcp.tool()
+async def scrape_jobs(
+    keywords: list[str] | None = None,
+    locations: list[str] | None = None,
+    max_results_per_query: int = 100,
+    job_domain: str | None = None,
+    max_total_queries: int | None = None,
+    output_path: str | None = None,
+    source_map: dict | None = None,
+    ats_domains: list[str] | None = None,
+) -> dict:
+    """
+    Scrape job postings matching keywords × locations.
+    Automatically routes locations to their most optimal scraper in a single run:
+    - US locations (New York, SF, Boston, etc.) -> BuiltIn (Apify)
+    - EU/Global locations (London, Berlin, etc.) -> LinkedIn (Apify)
+    - Japanese locations (Japan, Tokyo, etc.) -> Japanese job boards (Serper)
+    - All other locations -> Google Serper (ATS footprints)
+
+    Results from all active scrapers are seamlessly merged, normalized, and saved to a single CSV.
+
+    Parameters:
+    - keywords: List of job titles or keywords (e.g., ["Data Scientist", "ML Engineer"]).
+    - locations: List of locations (e.g., ["Berlin", "London", "New York", "Japan"]).
+    - source_map: (Optional) Override routing for specific locations. 
+      Format: {"builtin": ["Austin"], "linkedin": ["Dublin"], "serper": ["Paris"]}
+    - ats_domains: (Optional) List of domain footprints for Serper search. 
+      Example: ["boards.greenhouse.io", "wellfound.com", "thehub.io"]
+    - job_domain: (Optional) Extraction focus: "gtm", "sales", "biotech", "data", "any".
+      Auto-detected from keywords if not provided.
+    - max_results_per_query: Max items per keyword×location pair (default: 100).
+    - max_total_queries: Safety cap for total parallel requests (default from .env).
+
+    Example Usage:
+    scrape_jobs(
+        keywords=["AI Engineer"],
+        locations=["San Francisco", "London", "Japan"],
+        ats_domains=["greenhouse.io", "lever.co"]
+    )
+    """
+    DEFAULT_KEYWORDS = ["GTM engineer"]
+    DEFAULT_LOCATIONS = ["Berlin", "London", "New York", "San Francisco", "Boston", "US remote"]
+    
+    keywords = keywords or DEFAULT_KEYWORDS
+    locations = locations or DEFAULT_LOCATIONS
+
+    df = await _run_scrape(
+        keywords=keywords,
+        locations=locations,
+        max_results_per_query=max_results_per_query,
+        job_domain=job_domain,
+        max_total_queries=max_total_queries,
+        output_path=output_path,
+        source_map=source_map,
+        ats_domains=ats_domains
+    )
     
     return {
         "status": "ok",
-        "csv_path": out_path,
+        "csv_path": output_path or "data/raw_jobs_*.csv", # approximation if not provided
         "jobs_scraped": len(df),
-        "queries_run": min(total_requested, max_total_queries)
+        "queries_run": len(keywords) * len(locations) # approximation
+    }
+
+@mcp.tool()
+async def compare_searches(
+    search_strategies: list[dict],
+    profile_path: str | None = None,
+    max_results_per_query: int = 10,
+    top_n_per_strategy: int = 5,
+    output_dir: str | None = None,
+) -> dict:
+    """
+    Run multiple keyword strategies, score each independently, return comparative stats.
+
+    Example input:
+    [
+        {
+            "name": "traditional_sales",
+            "keywords": ["account executive", "channel manager"],
+            "locations": ["London", "Berlin"],
+            "job_domain": "sales"
+        },
+        {
+            "name": "presales_se",
+            "keywords": ["pre-sales engineer", "solutions engineer"],
+            "locations": ["London", "Berlin"],
+            "job_domain": "sales"
+        }
+    ]
+    """
+    profile_path = profile_path or os.getenv("DEFAULT_PROFILE_JSON")
+    output_dir = output_dir or os.getenv("DEFAULT_OUTPUT_DIR", "output/")
+    
+    if not profile_path or not Path(profile_path).exists():
+        raise FileNotFoundError(f"Profile not found at {profile_path}")
+        
+    with open(profile_path, encoding="utf-8") as f:
+        profile = json.load(f)
+    
+    profile_text = profile_to_text(profile)
+    model = get_model()
+    profile_vec = model.encode([profile_text], normalize_embeddings=True)[0]
+
+    results = []
+    all_jobs = []
+
+    for strategy in search_strategies:
+        name = strategy["name"]
+        keywords = strategy["keywords"]
+        locations = strategy["locations"]
+        job_domain = strategy.get("job_domain", "any")
+
+        logging.info(f"compare_searches: running strategy '{name}'...")
+
+        # Scrape
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        csv_path = f"data/compare_{name}_{timestamp}.csv"
+        df = await _run_scrape(
+            keywords=keywords,
+            locations=locations,
+            max_results_per_query=max_results_per_query,
+            job_domain=job_domain,
+            output_path=csv_path
+        )
+
+        if df.empty:
+            results.append({"name": name, "jobs_scraped": 0, "error": "no results"})
+            continue
+
+        # Embed & Score
+        df["_clean_text"] = df.apply(get_job_text, axis=1)
+        vecs = embed_texts(df["_clean_text"].tolist(), model)
+        df["embedding"] = [json.dumps(v.tolist()) for v in vecs]
+        df["embedding_model"] = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
+
+        scores = cosine_similarity([profile_vec], vecs)[0]
+        df["similarity_score"] = scores
+        df = df.sort_values("similarity_score", ascending=False).reset_index(drop=True)
+        df = df.drop(columns=["_clean_text"], errors="ignore")
+        df.to_csv(csv_path, index=False)
+
+        # Stats
+        valid_scores = scores[~np.isnan(scores)]
+        dist = {
+            ">=0.55": int((valid_scores >= 0.55).sum()),
+            "0.45-0.55": int(((valid_scores >= 0.45) & (valid_scores < 0.55)).sum()),
+            "<0.45": int((valid_scores < 0.45).sum()),
+        }
+
+        top_jobs = []
+        for _, row in df.head(top_n_per_strategy).iterrows():
+            job_info = {
+                "title": str(row.get("title", "")),
+                "company": str(row.get("company", "")),
+                "score": round(float(row["similarity_score"]), 4),
+                "url": str(row.get("url", "")),
+                "strategy": name,
+            }
+            top_jobs.append(job_info)
+            all_jobs.append(job_info)
+
+        results.append({
+            "name": name,
+            "jobs_scraped": len(df),
+            "median_score": round(float(np.median(valid_scores)), 4) if len(valid_scores) > 0 else 0,
+            "mean_score": round(float(np.mean(valid_scores)), 4) if len(valid_scores) > 0 else 0,
+            "max_score": round(float(valid_scores.max()), 4) if len(valid_scores) > 0 else 0,
+            "score_distribution": dist,
+            "top_jobs": top_jobs,
+            "csv_path": csv_path,
+        })
+
+    # Find winner
+    scored = [r for r in results if "median_score" in r]
+    winner = max(scored, key=lambda x: x["median_score"])["name"] if scored else None
+
+    # Merged top 10 across all strategies deduped by URL
+    seen_urls = set()
+    merged = []
+    for job in sorted(all_jobs, key=lambda x: -x["score"]):
+        if job["url"] not in seen_urls:
+            seen_urls.add(job["url"])
+            merged.append(job)
+    merged_top10 = merged[:10]
+
+    # Recommendation text
+    if len(scored) >= 2:
+        sorted_by_median = sorted(scored, key=lambda x: -x["median_score"])
+        best = sorted_by_median[0]
+        second = sorted_by_median[1]
+        if second["median_score"] > 0:
+            pct = round((best["median_score"] - second["median_score"]) / second["median_score"] * 100)
+            recommendation = (
+                f"'{best['name']}' returns {pct}% higher median score ({best['median_score']:.3f}) "
+                f"than '{second['name']}' ({second['median_score']:.3f}). "
+                f"Prioritise '{best['name']}' for future scrapes."
+            )
+        else:
+            recommendation = f"'{best['name']}' is the only strategy with positive scores."
+    else:
+        recommendation = "Only one strategy returned results — no comparison available."
+
+    return {
+        "status": "ok",
+        "strategies": results,
+        "winner": winner,
+        "recommendation": recommendation,
+        "merged_top_10": merged_top10,
     }
 
 
