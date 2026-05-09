@@ -128,12 +128,14 @@ def build_urls(keywords: list[str], locations: list[str], source_map: dict | Non
     
     COUNTRY_CODES = {
         "czech republic": "CZE",
-        "cze": "CZE", 
+        "cze": "CZE",
         "germany": "DEU",
         "deu": "DEU",
         "netherlands": "NLD",
         "poland": "POL",
         "austria": "AUT",
+        "emea": "EMEA_KEYWORD",       
+        "emea wide": "EMEA_KEYWORD",  
     }
 
     for kw in keywords:
@@ -147,10 +149,26 @@ def build_urls(keywords: list[str], locations: list[str], source_map: dict | Non
                 code = COUNTRY_CODES[loc_lower]
                 url = f"https://builtin.com/jobs?country={code}&allLocations=true&search={kw_url}"
                 urls_by_source["builtin"].append(url)
+
+            # elif loc_lower in COUNTRY_CODES:
+            #     code = COUNTRY_CODES[loc_lower]
+
+                if code == "EMEA_KEYWORD":
+                    # Special case: search by keyword with allLocations=true, no country filter
+                    # Generates: https://builtin.com/jobs?search=KEYWORD&allLocations=true
+                    url = f"https://builtin.com/jobs?search={kw_url}&allLocations=true"
+                else:
+                    # Standard country-code browse with keyword filter
+                    url = f"https://builtin.com/jobs?country={code}&allLocations=true&search={kw_url}"
+
+                urls_by_source["builtin"].append(url)
+
             else:
                 # Standard city/remote routing
                 url = f"https://builtin.com/jobs?search={kw_url}&location={loc_url}"
                 urls_by_source["builtin"].append(url)
+
+            
 
     return urls_by_source
 
