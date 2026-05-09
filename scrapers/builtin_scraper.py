@@ -154,9 +154,11 @@ def build_urls(keywords: list[str], locations: list[str], source_map: dict | Non
             #     code = COUNTRY_CODES[loc_lower]
 
                 if code == "EMEA_KEYWORD":
-                    # Special case: search by keyword with allLocations=true, no country filter
-                    # Generates: https://builtin.com/jobs?search=KEYWORD&allLocations=true
-                    url = f"https://builtin.com/jobs?search={kw_url}&allLocations=true"
+                    # Expand EMEA into individual country searches
+                    # BuiltIn has no EMEA region filter — scrape key EU countries instead
+                    for country_code in ["GBR", "DEU", "NLD", "FRA", "CHE", "SWE", "POL", "CZE"]:
+                        url = f"https://builtin.com/jobs?country={country_code}&allLocations=true&search={kw_url}"
+                        urls_by_source["builtin"].append(url)
                 else:
                     # Standard country-code browse with keyword filter
                     url = f"https://builtin.com/jobs?country={code}&allLocations=true&search={kw_url}"
