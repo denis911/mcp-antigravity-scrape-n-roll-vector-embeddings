@@ -121,11 +121,11 @@ async def scrape_apify(urls_by_source: dict[str, list[str]], max_items: int) -> 
 
     return deduped
 
+
 def build_urls(keywords: list[str], locations: list[str], source_map: dict | None = None) -> dict[str, list[str]]:
     """Returns {source_name: [url1, url2, ...]} grouped by scraping source."""
-    # Note: source_map is kept for signature compatibility but no longer used for routing here.
     urls_by_source = {"builtin": []}
-    
+
     COUNTRY_CODES = {
         "czech republic": "CZE",
         "cze": "CZE",
@@ -134,9 +134,11 @@ def build_urls(keywords: list[str], locations: list[str], source_map: dict | Non
         "netherlands": "NLD",
         "poland": "POL",
         "austria": "AUT",
-        "emea": "EMEA_KEYWORD",       
-        "emea wide": "EMEA_KEYWORD",  
+        "emea": "EMEA_KEYWORD",
+        "emea wide": "EMEA_KEYWORD",
     }
+
+    EMEA_COUNTRIES = ["GBR", "DEU", "NLD", "FRA", "CHE", "SWE", "POL", "CZE"]
 
     for kw in keywords:
         for loc in locations:
@@ -145,32 +147,22 @@ def build_urls(keywords: list[str], locations: list[str], source_map: dict | Non
             loc_lower = loc.lower()
 
             if loc_lower in COUNTRY_CODES:
-                # Country-code routing — uses BuiltIn country browse URL
                 code = COUNTRY_CODES[loc_lower]
-                url = f"https://builtin.com/jobs?country={code}&allLocations=true&search={kw_url}"
-                urls_by_source["builtin"].append(url)
-
-            # elif loc_lower in COUNTRY_CODES:
-            #     code = COUNTRY_CODES[loc_lower]
 
                 if code == "EMEA_KEYWORD":
-                    # Expand EMEA into individual country searches
-                    # BuiltIn has no EMEA region filter — scrape key EU countries instead
-                    for country_code in ["GBR", "DEU", "NLD", "FRA", "CHE", "SWE", "POL", "CZE"]:
+                    # Expand EMEA into individual EU country searches
+                    for country_code in EMEA_COUNTRIES:
                         url = f"https://builtin.com/jobs?country={country_code}&allLocations=true&search={kw_url}"
                         urls_by_source["builtin"].append(url)
                 else:
-                    # Standard country-code browse with keyword filter
+                    # Single country-code browse
                     url = f"https://builtin.com/jobs?country={code}&allLocations=true&search={kw_url}"
-
-                urls_by_source["builtin"].append(url)
+                    urls_by_source["builtin"].append(url)
 
             else:
                 # Standard city/remote routing
                 url = f"https://builtin.com/jobs?search={kw_url}&location={loc_url}"
                 urls_by_source["builtin"].append(url)
-
-            
 
     return urls_by_source
 
